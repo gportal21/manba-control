@@ -15,7 +15,7 @@ use std::time::Duration;
 use manba_core::live::{LiveReader, Snapshot};
 use manba_core::mapping::{self, Control, Mapper};
 use manba_core::profile::{self, Profile};
-use manba_core::{keys, xinput};
+use manba_core::{autostart, keys, xinput};
 use serde::Serialize;
 use tauri::State;
 
@@ -110,6 +110,28 @@ fn live(app: State<App>, profile: Profile) -> LiveView {
     }
 }
 
+/// El servicio se distribuye junto a la ventana.
+fn service_exe() -> Result<PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    Ok(exe.with_file_name("manba-service.exe"))
+}
+
+#[tauri::command]
+fn autostart_enabled() -> bool {
+    autostart::is_enabled()
+}
+
+/// Devuelve el estado real tras el cambio.
+#[tauri::command]
+fn set_autostart(enabled: bool) -> Result<bool, String> {
+    if enabled {
+        autostart::enable(&service_exe()?)?;
+    } else {
+        autostart::disable()?;
+    }
+    Ok(autostart::is_enabled())
+}
+
 /// Hace vibrar los mandos visibles. Con el servicio en marcha es el mando
 /// virtual, y el servicio reenvía la vibración al Manba con la intensidad
 /// del perfil guardado.
@@ -141,7 +163,9 @@ fn main() {
             load_profile,
             save_profile,
             live,
-            test_vibration
+            test_vibration,
+            autostart_enabled,
+            set_autostart
         ])
         .run(tauri::generate_context!())
         .expect("no se pudo iniciar la ventana de configuración");

@@ -16,7 +16,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
 
-use manba_core::profile;
+use manba_core::{autostart, profile};
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
@@ -85,6 +85,7 @@ struct Tray {
     profile_status: MenuItem,
     settings: MenuItem,
     enabled: CheckMenuItem,
+    autostart: CheckMenuItem,
     reload: MenuItem,
     edit: MenuItem,
     quit: MenuItem,
@@ -96,6 +97,7 @@ impl Tray {
         let profile_status = MenuItem::new("Perfil cargado", false, None);
         let settings = MenuItem::new("Abrir configuración", true, None);
         let enabled = CheckMenuItem::new("Perfil activo", true, true, None);
+        let autostart = CheckMenuItem::new("Iniciar con Windows", true, autostart::is_enabled(), None);
         let reload = MenuItem::new("Recargar perfil", true, None);
         let edit = MenuItem::new("Editar perfil", true, None);
         let quit = MenuItem::new("Salir", true, None);
@@ -109,6 +111,7 @@ impl Tray {
             &enabled,
             &reload,
             &edit,
+            &autostart,
             &PredefinedMenuItem::separator(),
             &quit,
         ])
@@ -128,6 +131,7 @@ impl Tray {
             profile_status,
             settings,
             enabled,
+            autostart,
             reload,
             edit,
             quit,
@@ -170,6 +174,18 @@ impl Tray {
             shared
                 .enabled
                 .store(self.enabled.is_checked(), Ordering::Relaxed);
+        } else if event.id == *self.autostart.id() {
+            let result = if self.autostart.is_checked() {
+                std::env::current_exe()
+                    .map_err(|e| e.to_string())
+                    .and_then(|exe| autostart::enable(&exe))
+            } else {
+                autostart::disable()
+            };
+            // Si falla, la casilla vuelve a reflejar el estado real.
+            if result.is_err() {
+                self.autostart.set_checked(autostart::is_enabled());
+            }
         } else if event.id == *self.reload.id() {
             shared.reload.store(true, Ordering::Relaxed);
         } else if event.id == *self.edit.id() {

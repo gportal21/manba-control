@@ -384,6 +384,21 @@ async function init() {
   $("#save").addEventListener("click", save);
   $("#discard").addEventListener("click", discard);
   $("#test-vibration").addEventListener("click", () => invoke("test_vibration"));
+
+  // Se aplica al momento: no forma parte del perfil.
+  const autostart = $("#autostart");
+  const autostartError = $("#autostart-error");
+  autostart.checked = await invoke("autostart_enabled");
+  autostart.addEventListener("change", async () => {
+    try {
+      autostart.checked = await invoke("set_autostart", { enabled: autostart.checked });
+      autostartError.hidden = true;
+    } catch (error) {
+      autostart.checked = await invoke("autostart_enabled");
+      autostartError.textContent = String(error);
+      autostartError.hidden = false;
+    }
+  });
   document.addEventListener("keydown", (event) => {
     if (event.ctrlKey && event.key.toLowerCase() === "s" && isDirty()) {
       event.preventDefault();

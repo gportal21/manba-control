@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = ["crates/manba-core", "crates/manba-probe", "crates/manba-service"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+manba-core = { path = "crates/manba-core" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+tray-icon = "0.19"
+vigem-client = "0.1.4"
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_UI_Input_XboxController",
+] }
+
+# Binario pequeño y rápido: optimización completa, sin símbolos de depuración.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

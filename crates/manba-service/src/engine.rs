@@ -1,0 +1,164 @@
+//! Hilo de trabajo: lee el mando, aplica el perfil y envía el resultado.
+
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use std::thread;
+use std::time::{Duration, Instant};
+
+use manba_core::mapping::{Mapper, PadOutput};
+use manba_core::profile::Profile;
+use manba_core::xinput::{Event, GamepadState, Poller};
+
+use crate::output::{KeyboardMouse, VirtualPad, VirtualPadError};
+
+/// Sin mando conectado no hace falta leer tan a menudo.
+const IDLE_INTERVAL: Duration = Duration::from_millis(50);
+/// Tope del tiempo entre ciclos para el movimiento del cursor, por si el
+/// hilo se retrasa (evita saltos bruscos).
+const MAX_STEP: Duration = Duration::from_millis(50);
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum PadStatus {
+    #[default]
+    Idle,
+    Active,
+    NoDriver,
+    Error(String),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Status {
+    /// Ranura de XInput del mando físico en uso.
+    pub controller: Option<u32>,
+    pub virtual_pad: PadStatus,
+    pub profile_error: Option<String>,
+}
+
+/// Estado compartido entre la bandeja (hilo principal) y el motor.
+pub struct Shared {
+    /// Con el perfil desactivado el mando virtual repite al físico.
+    pub enabled: AtomicBool,
+    pub reload: AtomicBool,
+    pub stop: AtomicBool,
+    pub status: Mutex<Status>,
+}
+
+impl Shared {
+    pub fn new() -> Self {
+        Self {
+            enabled: AtomicBool::new(true),
+            reload: AtomicBool::new(true),
+            stop: AtomicBool::new(false),
+            status: Mutex::new(Status::default()),
+        }
+    }
+}
+
+/// Bucle principal del motor. `notify` avisa a la bandeja de que el estado cambió.
+pub fn run(shared: &Shared, profile_path: &Path, notify: impl Fn()) {
+    let passthrough = Mapper::default();
+    let mut mapper = Mapper::default();
+    let mut interval = Duration::from_millis(1);
+
+    let mut poller = Poller::new();
+    let mut events = Vec::new();
+    let mut active: Option<(u32, GamepadState)> = None;
+    let mut pad: Option<VirtualPad> = None;
+    let mut last_pad: Option<PadOutput> = None;
+    let mut kbm = KeyboardMouse::default();
+
+    let mut status = Status::default();
+    let mut published = Status::default();
+    let mut last_tick = Instant::now();
+
+    while !shared.stop.load(Ordering::Relaxed) {
+        if shared.reload.swap(false, Ordering::Relaxed) {
+            let loaded = Profile::load(profile_path)
+                .and_then(|profile| Mapper::new(&profile).map(|m| (profile, m)));
+            match loaded {
+                Ok((profile, new_mapper)) => {
+                    interval = Duration::from_millis(profile.poll_interval_ms);
+                    mapper = new_mapper;
+                    status.profile_error = None;
+                }
+                // Se mantiene el perfil anterior hasta que se corrija el archivo.
+                Err(e) => status.profile_error = Some(e),
+            }
+        }
+
+        events.clear();
+        poller.poll(&mut events);
+        for event in &events {
+            match *event {
+                Event::Connected(slot) if active.is_none() => {
+                    active = Some((slot, GamepadState::default()));
+                    match VirtualPad::connect() {
+                        Ok(mut virtual_pad) => {
+                            poller.set_ignored(virtual_pad.user_index());
+                            pad = Some(virtual_pad);
+                            status.virtual_pad = PadStatus::Active;
+                        }
+                        Err(VirtualPadError::NoDriver) => status.virtual_pad = PadStatus::NoDriver,
+                        Err(VirtualPadError::Other(e)) => {
+                            status.virtual_pad = PadStatus::Error(e)
+                        }
+                    }
+                }
+                Event::Disconnected(slot) if active.is_some_and(|(s, _)| s == slot) => {
+                    active = None;
+                    pad = None;
+                    last_pad = None;
+                    poller.set_ignored(None);
+                    kbm.release_all();
+                    status.virtual_pad = PadStatus::Idle;
+                }
+                Event::State(slot, state) => {
+                    if let Some((active_slot, current)) = &mut active {
+                        if *active_slot == slot {
+                            *current = state;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let now = Instant::now();
+        let elapsed = (now - last_tick).min(MAX_STEP);
+        last_tick = now;
+
+        if let Some((_, state)) = &active {
+            let current = if shared.enabled.load(Ordering::Relaxed) {
+                &mapper
+            } else {
+                &passthrough
+            };
+            let mapped = current.map(state);
+
+            if let Some(virtual_pad) = &mut pad {
+                if last_pad != Some(mapped.pad) {
+                    match virtual_pad.update(&mapped.pad) {
+                        Ok(()) => last_pad = Some(mapped.pad),
+                        Err(e) => {
+                            pad = None;
+                            last_pad = None;
+                            poller.set_ignored(None);
+                            status.virtual_pad = PadStatus::Error(e);
+                        }
+                    }
+                }
+            }
+            kbm.apply(&mapped, elapsed);
+        }
+
+        status.controller = active.map(|(slot, _)| slot);
+        if status != published {
+            published = status.clone();
+            *shared.status.lock().unwrap() = status.clone();
+            notify();
+        }
+
+        thread::sleep(if active.is_some() { interval } else { IDLE_INTERVAL });
+    }
+}

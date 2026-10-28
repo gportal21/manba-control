@@ -1,0 +1,9 @@
+[package]
+name = "manba-probe"
+description = "Probador en consola del mando Manba One"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+manba-core = { path = "../manba-core" }

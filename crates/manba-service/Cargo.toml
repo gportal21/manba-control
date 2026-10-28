@@ -1,0 +1,17 @@
+[package]
+name = "manba-service"
+description = "Servicio en la bandeja del sistema que aplica el perfil al mando Manba One"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+manba-core.workspace = true
+tray-icon.workspace = true
+vigem-client.workspace = true
+windows-sys = { workspace = true, features = [
+    "Win32_Security",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }

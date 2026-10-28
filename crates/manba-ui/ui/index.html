@@ -8,139 +8,159 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">
-      <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
-        <circle cx="16" cy="16" r="13" fill="none" stroke="currentColor" stroke-width="4"/>
-        <circle cx="16" cy="16" r="5" fill="currentColor"/>
-      </svg>
-      <span>Manba Control</span>
-    </div>
-    <div class="pills">
-      <span class="pill" id="pill-service"><i></i><b>Servicio</b></span>
-      <span class="pill" id="pill-pad"><i></i><b>Mando</b></span>
-      <span class="pill" id="pill-virtual"><i></i><b>Mando virtual</b></span>
+    <div class="topbar-inner">
+      <div class="brand">
+        <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true">
+          <circle cx="17" cy="17" r="14" fill="none" stroke="#3A6BD0" stroke-width="2.5"/>
+          <circle cx="17" cy="17" r="5.5" fill="#3A6BD0"/>
+        </svg>
+        <div class="brand-text">
+          <div class="brand-name">Manba Control</div>
+          <div class="brand-model">Manba One V1</div>
+        </div>
+      </div>
+      <div class="pills">
+        <span class="pill" id="pill-service"><i></i><b>Servicio</b></span>
+        <span class="pill" id="pill-pad"><i></i><b>Mando</b></span>
+        <span class="pill" id="pill-virtual"><i></i><b>Mando virtual</b></span>
+      </div>
     </div>
   </header>
 
   <main>
-    <div class="notice" id="notice" hidden></div>
+    <div class="alert error" role="alert" id="pad-alert" hidden>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+      <div class="alert-body">
+        <div class="alert-title" id="pad-alert-title">Error del mando virtual</div>
+        <div class="alert-text" id="pad-alert-text">El mando físico está conectado, pero los juegos podrían no recibir la entrada hasta que se resuelva.</div>
+      </div>
+      <button class="btn" type="button" id="pad-retry">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+        Reintentar
+      </button>
+    </div>
+
+    <div class="alert" role="status" id="notice" hidden>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16h.01"/></svg>
+      <div class="alert-body">
+        <div class="alert-text" id="notice-text"></div>
+      </div>
+    </div>
 
     <section class="card">
       <div class="profile-bar">
-        <label class="field profile-select">
-          <span>Perfil que estás editando</span>
-          <select id="profile-select"></select>
-        </label>
-        <div class="profile-actions">
-          <button class="secondary" type="button" id="profile-new">Nuevo</button>
-          <button class="secondary" type="button" id="profile-duplicate">Duplicar</button>
-          <button class="secondary" type="button" id="profile-rename">Renombrar</button>
-          <button class="secondary danger" type="button" id="profile-delete">Eliminar</button>
+        <div class="field">
+          <label class="label" for="profile-select">Perfil que estás editando</label>
+          <select class="sel" id="profile-select"></select>
+        </div>
+        <div class="row-actions">
+          <button class="btn ghost" type="button" id="profile-new">Nuevo</button>
+          <button class="btn ghost" type="button" id="profile-duplicate">Duplicar</button>
+          <button class="btn ghost" type="button" id="profile-rename">Renombrar</button>
+          <button class="btn ghost danger" type="button" id="profile-delete">Eliminar</button>
         </div>
       </div>
       <form class="name-form" id="name-form" hidden>
-        <label class="field">
-          <span id="name-label">Nombre del perfil</span>
-          <input type="text" id="name-input" maxlength="32" autocomplete="off" spellcheck="false">
-        </label>
-        <div class="profile-actions">
-          <button class="primary" type="submit">Aceptar</button>
-          <button class="secondary" type="button" id="name-cancel">Cancelar</button>
+        <div class="field">
+          <label class="label" for="name-input" id="name-label">Nombre del perfil</label>
+          <input class="input" type="text" id="name-input" maxlength="32" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="row-actions">
+          <button class="btn primary" type="submit">Aceptar</button>
+          <button class="btn ghost" type="button" id="name-cancel">Cancelar</button>
         </div>
         <p class="hint error-text" id="name-error" hidden></p>
       </form>
       <p class="hint active-line" id="active-line">El servicio no está en marcha.</p>
     </section>
 
-    <section class="grid">
-      <article class="card">
+    <div class="grid" id="sticks"></div>
+
+    <div class="grid">
+      <section class="card">
+        <h2>Gatillos</h2>
+        <div class="stack">
+          <div class="trigger-row">
+            <span class="trigger-name">LT</span>
+            <div class="bar"><div class="bar-fill" id="bar-lt"></div><div class="bar-mark" id="mark-lt"></div></div>
+            <span class="trigger-value" id="val-lt">0</span>
+          </div>
+          <div class="trigger-row">
+            <span class="trigger-name">RT</span>
+            <div class="bar"><div class="bar-fill" id="bar-rt"></div><div class="bar-mark" id="mark-rt"></div></div>
+            <span class="trigger-value" id="val-rt">0</span>
+          </div>
+        </div>
+        <div class="slider divider">
+          <div class="slider-head">
+            <label class="label with-mark" for="thr"><span class="mark-swatch"></span>Umbral</label>
+            <span class="val" data-out="gatillos.umbral"></span>
+          </div>
+          <input class="sl" type="range" id="thr" min="0" max="255" step="1" data-path="gatillos.umbral">
+          <p class="hint">Por debajo del umbral el gatillo se ignora. La marca ámbar lo muestra sobre cada barra.</p>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Vibración y lectura</h2>
+        <div class="slider">
+          <div class="slider-head">
+            <label class="label" for="vib">Intensidad de vibración</label>
+            <span class="val" data-out="vibracion.intensidad"></span>
+          </div>
+          <input class="sl" type="range" id="vib" min="0" max="2" step="0.05" data-path="vibracion.intensidad">
+          <div class="test-row">
+            <button class="btn" id="test-vibration" type="button">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="4" width="10" height="16" rx="2"/><path d="M3 9v6"/><path d="M21 9v6"/></svg>
+              <span id="test-label">Probar vibración</span>
+            </button>
+            <span class="hint">Usa la intensidad guardada.</span>
+          </div>
+        </div>
+        <div class="slider divider">
+          <div class="slider-head">
+            <label class="label" for="poll">Intervalo de lectura</label>
+            <span class="val" data-out="intervalo_ms"></span>
+          </div>
+          <input class="sl" type="range" id="poll" min="1" max="16" step="1" data-path="intervalo_ms">
+          <p class="hint">1 ms da la mínima latencia; valores mayores gastan menos CPU.</p>
+        </div>
+      </section>
+    </div>
+
+    <div class="grid">
+      <section class="card">
         <h2>Juegos de este perfil</h2>
         <p class="hint">Cuando uno de estos programas esté en primer plano, el servicio usará este perfil automáticamente.</p>
         <div class="chips" id="games"></div>
         <form class="game-form" id="game-form">
-          <input type="text" id="game-input" list="running-apps" placeholder="juego.exe" autocomplete="off" spellcheck="false">
+          <input class="input" type="text" id="game-input" list="running-apps" placeholder="juego.exe" autocomplete="off" spellcheck="false" aria-label="Ejecutable del juego">
           <datalist id="running-apps"></datalist>
-          <button class="secondary" type="submit">Añadir</button>
+          <button class="btn" type="submit">Añadir</button>
         </form>
         <p class="hint">Mientras escribes se sugieren los programas abiertos ahora mismo: abre el juego antes para encontrarlo fácilmente.</p>
-      </article>
+      </section>
 
-      <article class="card" id="general">
+      <section class="card" id="general">
         <h2>General</h2>
-        <label class="field">
-          <span>Perfil base (cuando ningún juego tiene uno propio)</span>
-          <select id="base-select"></select>
-        </label>
-        <label class="check">
-          <input type="checkbox" id="shortcuts">
-          <span>Atajos del mando</span>
-        </label>
-        <p class="hint">Mantén Back y pulsa la cruceta: derecha o izquierda cambian de perfil, abajo pausa o reanuda la reasignación. El mando vibra para confirmarlo.</p>
-        <label class="check">
-          <input type="checkbox" id="autostart">
-          <span>Iniciar Manba Control con Windows</span>
-        </label>
+        <div class="field">
+          <label class="label" for="base-select">Perfil base (cuando ningún juego tiene uno propio)</label>
+          <select class="sel" id="base-select"></select>
+        </div>
+        <div class="stack divider">
+          <div class="switch-row">
+            <label class="label" for="shortcuts">Atajos del mando</label>
+            <input class="sw" type="checkbox" id="shortcuts">
+          </div>
+          <p class="hint">Mantén Back y pulsa la cruceta: derecha o izquierda cambian de perfil, abajo pausa o reanuda la reasignación. El mando vibra para confirmarlo.</p>
+          <div class="switch-row">
+            <label class="label" for="autostart">Iniciar Manba Control con Windows</label>
+            <input class="sw" type="checkbox" id="autostart">
+          </div>
+        </div>
         <p class="hint error-text" id="general-error" hidden></p>
-      </article>
-    </section>
-
-    <section class="grid sticks">
-      <article class="card" data-stick="stick_izquierdo">
-        <h2>Stick izquierdo</h2>
-        <div class="stick-body">
-          <canvas class="stick-canvas" width="180" height="180"></canvas>
-          <div class="fields"></div>
-        </div>
-        <p class="readout"></p>
-      </article>
-      <article class="card" data-stick="stick_derecho">
-        <h2>Stick derecho</h2>
-        <div class="stick-body">
-          <canvas class="stick-canvas" width="180" height="180"></canvas>
-          <div class="fields"></div>
-        </div>
-        <p class="readout"></p>
-      </article>
-    </section>
-
-    <section class="grid">
-      <article class="card">
-        <h2>Gatillos</h2>
-        <div class="trigger-row">
-          <span class="trigger-label">LT</span>
-          <div class="bar"><div class="bar-fill" id="bar-lt"></div><div class="bar-mark" id="mark-lt"></div></div>
-          <span class="trigger-value" id="val-lt">0</span>
-        </div>
-        <div class="trigger-row">
-          <span class="trigger-label">RT</span>
-          <div class="bar"><div class="bar-fill" id="bar-rt"></div><div class="bar-mark" id="mark-rt"></div></div>
-          <span class="trigger-value" id="val-rt">0</span>
-        </div>
-        <label class="field">
-          <span>Umbral <em data-out="gatillos.umbral"></em></span>
-          <input type="range" min="0" max="200" step="1" data-path="gatillos.umbral">
-        </label>
-        <p class="hint">Por debajo del umbral el gatillo se ignora. La marca vertical lo muestra sobre la barra.</p>
-      </article>
-
-      <article class="card">
-        <h2>Vibración y lectura</h2>
-        <label class="field">
-          <span>Intensidad de vibración <em data-out="vibracion.intensidad"></em></span>
-          <input type="range" min="0" max="2" step="0.05" data-path="vibracion.intensidad">
-        </label>
-        <button class="secondary" id="test-vibration" type="button">
-          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 8v8M20 8v8M8 5h8v14H8z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
-          Probar vibración
-        </button>
-        <p class="hint">La prueba usa la intensidad guardada.</p>
-        <label class="field">
-          <span>Intervalo de lectura <em data-out="intervalo_ms"></em></span>
-          <input type="range" min="1" max="16" step="1" data-path="intervalo_ms">
-        </label>
-        <p class="hint">1 ms da la mínima latencia; valores mayores gastan aún menos CPU.</p>
-      </article>
-    </section>
+      </section>
+    </div>
 
     <section class="card">
       <h2>Botones</h2>
@@ -151,7 +171,7 @@
     <section class="card">
       <div class="card-head">
         <h2>Macros</h2>
-        <button class="secondary" type="button" id="macro-new">Nueva macro</button>
+        <button class="btn small" type="button" id="macro-new">Nueva macro</button>
       </div>
       <p class="hint">Una macro es una secuencia que se lanza con un botón: asígnala en la tabla de botones. Cada paso mantiene pulsadas sus acciones durante los milisegundos indicados; un paso sin acciones es una espera. Escribe las acciones separadas por +, por ejemplo <code>A + tecla:Q</code> o <code>raton:izquierdo</code>.</p>
       <div id="macros"></div>
@@ -159,42 +179,91 @@
   </main>
 
   <footer class="savebar">
-    <span class="save-status" id="save-status">Sin cambios</span>
-    <div class="save-actions">
-      <button class="secondary" id="discard" type="button" disabled>Descartar</button>
-      <button class="primary" id="save" type="button" disabled>Guardar</button>
+    <div class="savebar-inner">
+      <div class="save-status" id="save-status"><i></i><span>Sin cambios</span></div>
+      <div class="save-actions">
+        <button class="btn ghost" id="discard" type="button" disabled>Descartar</button>
+        <button class="btn primary" id="save" type="button" disabled>Guardar</button>
+      </div>
     </div>
   </footer>
 
-  <template id="stick-fields">
-    <label class="field">
-      <span>Modo</span>
-      <select data-key="modo">
-        <option value="stick">Stick</option>
-        <option value="raton">Ratón</option>
-        <option value="ninguno">Desactivado</option>
-      </select>
-    </label>
-    <label class="field">
-      <span>Zona muerta <em data-out-key="zona_muerta"></em></span>
-      <input type="range" min="0" max="0.6" step="0.01" data-key="zona_muerta">
-    </label>
-    <label class="field">
-      <span>Zona exterior <em data-out-key="zona_exterior"></em></span>
-      <input type="range" min="0.5" max="1" step="0.01" data-key="zona_exterior">
-    </label>
-    <label class="field">
-      <span>Curva <em data-out-key="curva"></em></span>
-      <input type="range" min="0.5" max="3" step="0.05" data-key="curva">
-    </label>
-    <label class="field mouse-only">
-      <span>Velocidad del ratón <em data-out-key="velocidad_raton"></em></span>
-      <input type="range" min="200" max="5000" step="50" data-key="velocidad_raton">
-    </label>
-    <label class="check">
-      <input type="checkbox" data-key="invertir_y">
-      <span>Invertir eje vertical</span>
-    </label>
+  <template id="stick-card">
+    <section class="card">
+      <div class="card-head">
+        <div class="title"><h2 data-title></h2><span class="tag" data-tag></span></div>
+        <div class="inline-field">
+          <label class="label-sm" data-for="modo">Modo</label>
+          <select class="sel" data-key="modo">
+            <option value="stick">Stick</option>
+            <option value="raton">Ratón</option>
+            <option value="ninguno">Desactivado</option>
+          </select>
+        </div>
+      </div>
+      <div class="stick-body">
+        <div class="stick-view">
+          <svg class="stick-svg" width="196" height="196" viewBox="0 0 200 200" role="img" aria-label="Vista del stick con zona muerta y zona exterior">
+            <circle cx="100" cy="100" r="96" fill="#0E1113" stroke="#272C32" stroke-width="1.5"/>
+            <line x1="100" y1="6" x2="100" y2="194" stroke="#1E2328" stroke-width="1"/>
+            <line x1="6" y1="100" x2="194" y2="100" stroke="#1E2328" stroke-width="1"/>
+            <circle class="zone-outer" cx="100" cy="100" r="92" fill="none" stroke="#3A6BD0" stroke-opacity="0.55" stroke-width="1.5" stroke-dasharray="4 5"/>
+            <circle class="zone-dz" cx="100" cy="100" r="23" fill="#3A6BD0" fill-opacity="0.10" stroke="#3A6BD0" stroke-opacity="0.45" stroke-width="1"/>
+            <circle class="pos-raw" cx="100" cy="100" r="5" fill="none" stroke="#8A929B" stroke-width="1.5" visibility="hidden"/>
+            <circle class="pos-out" cx="100" cy="100" r="7" fill="#3A6BD0"/>
+          </svg>
+          <div class="legend">
+            <span><span class="legend-dz"></span>Zona muerta</span>
+            <span><span class="legend-out"></span>Exterior</span>
+          </div>
+          <div class="readout">
+            <span>Físico</span><span data-raw>0, 0</span>
+            <span>Juego</span><span class="game" data-game>0.00, 0.00</span>
+          </div>
+        </div>
+
+        <div class="stick-fields">
+          <div class="slider">
+            <div class="slider-head">
+              <label class="label" data-for="zona_muerta">Zona muerta</label>
+              <span class="val" data-out-key="zona_muerta"></span>
+            </div>
+            <input class="sl" type="range" min="0" max="0.6" step="0.01" data-key="zona_muerta">
+          </div>
+          <div class="slider">
+            <div class="slider-head">
+              <label class="label" data-for="zona_exterior">Zona exterior</label>
+              <span class="val" data-out-key="zona_exterior"></span>
+            </div>
+            <input class="sl" type="range" min="0.5" max="1" step="0.01" data-key="zona_exterior">
+          </div>
+          <div class="slider">
+            <div class="slider-head">
+              <label class="label" data-for="curva">Curva de respuesta</label>
+              <span class="val" data-out-key="curva"></span>
+            </div>
+            <input class="sl" type="range" min="0.5" max="3" step="0.05" data-key="curva">
+            <svg class="curve-graph" viewBox="0 0 200 88" preserveAspectRatio="none" role="img" aria-label="Gráfica de la curva de respuesta">
+              <rect class="curve-dz" x="4" y="4" width="0" height="80" fill="#3A6BD0" fill-opacity="0.07"/>
+              <line x1="4" y1="84" x2="196" y2="4" stroke="#2A3036" stroke-width="1" stroke-dasharray="3 4" vector-effect="non-scaling-stroke"/>
+              <path class="curve-path" d="" fill="none" stroke="#3A6BD0" stroke-width="2" vector-effect="non-scaling-stroke"/>
+            </svg>
+            <div class="curve-captions"><span>Más precisión al inicio</span><span>Más rápido al inicio</span></div>
+          </div>
+          <div class="slider mouse-only">
+            <div class="slider-head">
+              <label class="label" data-for="velocidad_raton">Velocidad del ratón</label>
+              <span class="val" data-out-key="velocidad_raton"></span>
+            </div>
+            <input class="sl" type="range" min="200" max="5000" step="50" data-key="velocidad_raton">
+          </div>
+          <div class="switch-row divider">
+            <label class="label" data-for="invertir_y">Invertir eje vertical</label>
+            <input class="sw" type="checkbox" data-key="invertir_y">
+          </div>
+        </div>
+      </div>
+    </section>
   </template>
 
   <script src="app.js"></script>

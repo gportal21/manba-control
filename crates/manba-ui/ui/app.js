@@ -31,11 +31,76 @@ function setPath(object, path, value) {
 }
 
 function formatValue(path, value) {
-  if (path.endsWith("intervalo_ms")) return `${value} ms`;
   if (path.endsWith("velocidad_raton")) return `${Math.round(value)} px/s`;
   if (path.endsWith("umbral")) return `${value}`;
   if (path.endsWith("intensidad")) return `${Math.round(value * 100)} %`;
   return Number(value).toFixed(2);
+}
+
+// Escribe el valor de una etiqueta; el intervalo añade la frecuencia en gris.
+function writeOut(out, path, value) {
+  if (!path.endsWith("intervalo_ms")) {
+    out.textContent = formatValue(path, value);
+    return;
+  }
+  const hz = document.createElement("span");
+  hz.className = "faint";
+  hz.textContent = ` · ${Math.round(1000 / value)} Hz`;
+  out.replaceChildren(`${value} ms`, hz);
+}
+
+// La pista del slider se rellena con el acento hasta el valor.
+function paintRange(input) {
+  const min = Number(input.min);
+  const max = Number(input.max);
+  const percent = ((Number(input.value) - min) / (max - min)) * 100;
+  input.style.setProperty("--p", `${percent}%`);
+}
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function closeIcon() {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("width", "14");
+  svg.setAttribute("height", "14");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2.2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("d", "M6 6l12 12M18 6 6 18");
+  svg.append(path);
+  return svg;
+}
+
+function iconButton(label) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "icon-button";
+  button.setAttribute("aria-label", label);
+  button.append(closeIcon());
+  return button;
+}
+
+// Gráfica de la curva: entrada en X, salida en Y, con zona muerta y exterior.
+function curvePath(config) {
+  const width = 200;
+  const height = 88;
+  const pad = 4;
+  const points = [];
+  for (let i = 0; i <= 48; i++) {
+    const x = i / 48;
+    let y;
+    if (x <= config.zona_muerta) y = 0;
+    else if (x >= config.zona_exterior) y = 1;
+    else y = ((x - config.zona_muerta) / Math.max(0.001, config.zona_exterior - config.zona_muerta)) ** config.curva;
+    const px = pad + x * (width - 2 * pad);
+    const py = height - pad - y * (height - 2 * pad);
+    points.push(`${i === 0 ? "M" : "L"}${px.toFixed(1)},${py.toFixed(1)}`);
+  }
+  return points.join(" ");
 }
 
 function readInput(input) {
@@ -64,22 +129,33 @@ function fillSelect(select, names, selected) {
 // --- Formulario -------------------------------------------------------------
 
 function buildSticks() {
-  const template = $("#stick-fields");
-  for (const card of $$("[data-stick]")) {
-    const stick = card.dataset.stick;
-    const fields = $(".fields", card);
-    fields.append(template.content.cloneNode(true));
-    for (const input of $$("[data-key]", fields)) {
+  const template = $("#stick-card");
+  for (const [stick, title, tag] of [
+    ["stick_izquierdo", "Stick izquierdo", "LS"],
+    ["stick_derecho", "Stick derecho", "RS"],
+  ]) {
+    const card = template.content.firstElementChild.cloneNode(true);
+    card.dataset.stick = stick;
+    $("[data-title]", card).textContent = title;
+    $("[data-tag]", card).textContent = tag;
+    for (const input of $$("[data-key]", card)) {
       input.dataset.path = `${stick}.${input.dataset.key}`;
+      input.id = `${stick}-${input.dataset.key}`;
     }
-    for (const out of $$("[data-out-key]", fields)) {
+    for (const label of $$("[data-for]", card)) {
+      label.htmlFor = `${stick}-${label.dataset.for}`;
+    }
+    for (const out of $$("[data-out-key]", card)) {
       out.dataset.out = `${stick}.${out.dataset.outKey}`;
     }
+    $("#sticks").append(card);
   }
 }
 
 function actionOptions(self) {
   const select = document.createElement("select");
+  select.className = "sel action";
+  select.setAttribute("aria-label", `Acción de ${self}`);
   const add = (parent, value, label) => {
     const option = document.createElement("option");
     option.value = value;
@@ -131,7 +207,7 @@ function findKey(object, name) {
 
 function turboSelect(control) {
   const select = document.createElement("select");
-  select.className = "turbo";
+  select.className = "sel turbo";
   select.setAttribute("aria-label", `Turbo de ${control}`);
   for (const [value, label] of [["", "Sin turbo"], ...TURBO_RATES.map((r) => [String(r), `Turbo ${r}/s`])]) {
     const option = document.createElement("option");
@@ -163,7 +239,7 @@ function setTurbo(select, rate) {
 function refreshMacroOptions() {
   const names = Object.keys(profile.macros);
   for (const row of $$(".button-row")) {
-    const select = $("select:not(.turbo)", row);
+    const select = $(".action", row);
     $("optgroup[data-macros]", select)?.remove();
     if (names.length) {
       const group = document.createElement("optgroup");
@@ -237,14 +313,22 @@ function fillForm() {
 
 function refreshLabels() {
   for (const out of $$("[data-out]")) {
-    out.textContent = formatValue(out.dataset.out, getPath(profile, out.dataset.out));
+    writeOut(out, out.dataset.out, getPath(profile, out.dataset.out));
   }
+  for (const input of $$("input.sl")) paintRange(input);
   for (const card of $$("[data-stick]")) {
-    const mode = profile[card.dataset.stick].modo;
-    $(".mouse-only", card).hidden = mode !== "raton";
+    const config = profile[card.dataset.stick];
+    $(".mouse-only", card).hidden = config.modo !== "raton";
+    $(".zone-dz", card).setAttribute("r", (config.zona_muerta * 92).toFixed(1));
+    $(".zone-outer", card).setAttribute("r", (config.zona_exterior * 92).toFixed(1));
+    $(".curve-dz", card).setAttribute("width", (config.zona_muerta * 192).toFixed(1));
+    $(".curve-path", card).setAttribute("d", curvePath(config));
   }
+  const threshold = `${(profile.gatillos.umbral / 255) * 100}%`;
+  $("#mark-lt").style.left = threshold;
+  $("#mark-rt").style.left = threshold;
   for (const row of $$(".button-row")) {
-    row.classList.toggle("changed", $("select:not(.turbo)", row).value !== "");
+    row.classList.toggle("changed", $(".action", row).value !== "");
     const turbo = $(".turbo", row);
     turbo.classList.toggle("on", turbo.value !== "");
   }
@@ -256,24 +340,34 @@ function isDirty() {
 
 function setSaveStatus(text, kind = "") {
   const status = $("#save-status");
-  status.textContent = text;
+  $("span", status).textContent = text;
   status.className = `save-status ${kind}`;
 }
 
+// "Guardado" se mantiene hasta el siguiente cambio.
+let justSaved = false;
+
 function onChange() {
+  justSaved = false;
+  updateSaveState();
+}
+
+function updateSaveState() {
   refreshLabels();
   const dirty = isDirty();
   $("#save").disabled = !dirty;
   $("#discard").disabled = !dirty;
-  setSaveStatus(dirty ? `Cambios sin guardar en "${currentName}"` : "Sin cambios", dirty ? "dirty" : "");
+  if (dirty) setSaveStatus("Cambios sin guardar", "dirty");
+  else if (justSaved) setSaveStatus("Guardado", "ok");
+  else setSaveStatus("Sin cambios");
 }
 
 async function save() {
   try {
     await invoke("save_profile", { name: currentName, profile });
     saved = clone(profile);
-    onChange();
-    setSaveStatus("Guardado. El servicio ya aplica los cambios.");
+    justSaved = true;
+    updateSaveState();
   } catch (error) {
     setSaveStatus(`No se pudo guardar: ${error}`, "error");
   }
@@ -325,6 +419,7 @@ function renderMacros() {
       head.className = "macro-head";
       const nameInput = document.createElement("input");
       nameInput.type = "text";
+      nameInput.className = "input";
       nameInput.value = name;
       nameInput.maxLength = 32;
       nameInput.setAttribute("aria-label", "Nombre de la macro");
@@ -339,7 +434,7 @@ function renderMacros() {
       });
       const remove = document.createElement("button");
       remove.type = "button";
-      remove.className = "secondary danger";
+      remove.className = "btn ghost small danger";
       remove.textContent = "Eliminar macro";
       remove.addEventListener("click", () => {
         delete profile.macros[name];
@@ -362,6 +457,7 @@ function renderMacros() {
         number.textContent = index + 1;
         const actions = document.createElement("input");
         actions.type = "text";
+        actions.className = "input";
         actions.value = stepText(step);
         actions.placeholder = "Espera (sin acciones)";
         actions.spellcheck = false;
@@ -372,6 +468,7 @@ function renderMacros() {
         });
         const ms = document.createElement("input");
         ms.type = "number";
+        ms.className = "input";
         ms.min = "1";
         ms.max = "5000";
         ms.value = step.ms;
@@ -381,11 +478,7 @@ function renderMacros() {
           step.ms = Math.round(Number(ms.value)) || 0;
           onChange();
         });
-        const drop = document.createElement("button");
-        drop.type = "button";
-        drop.className = "icon-button";
-        drop.textContent = "×";
-        drop.setAttribute("aria-label", `Quitar el paso ${index + 1}`);
+        const drop = iconButton(`Quitar el paso ${index + 1}`);
         drop.disabled = macro.pasos.length === 1;
         drop.addEventListener("click", () => {
           macro.pasos.splice(index, 1);
@@ -398,7 +491,7 @@ function renderMacros() {
 
       const add = document.createElement("button");
       add.type = "button";
-      add.className = "secondary";
+      add.className = "btn small";
       add.textContent = "Añadir paso";
       add.addEventListener("click", () => {
         macro.pasos.push({ pulsar: [], ms: 50 });
@@ -430,10 +523,7 @@ function renderGames() {
       const chip = document.createElement("span");
       chip.className = "chip";
       chip.textContent = game;
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.textContent = "×";
-      remove.setAttribute("aria-label", `Quitar ${game}`);
+      const remove = iconButton(`Quitar ${game}`);
       remove.addEventListener("click", () => {
         profile.juegos.splice(index, 1);
         renderGames();
@@ -633,71 +723,21 @@ async function bindGeneral() {
 
 // --- Estado en vivo ---------------------------------------------------------
 
-function cssVar(name) {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-}
+// Radio de la vista del stick en unidades del SVG (200x200, centro en 100).
+const STICK_RADIUS = 92;
 
-function drawStick(canvas, config, raw, processed) {
-  const ratio = window.devicePixelRatio || 1;
-  const size = canvas.clientWidth;
-  if (canvas.width !== size * ratio) {
-    canvas.width = size * ratio;
-    canvas.height = size * ratio;
-  }
-  const ctx = canvas.getContext("2d");
-  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-  ctx.clearRect(0, 0, size, size);
-
-  const c = size / 2;
-  const r = c - 8;
-  const border = cssVar("--border");
-  const accent = cssVar("--accent");
-
-  // Recorrido completo.
-  ctx.fillStyle = cssVar("--surface-2");
-  ctx.beginPath();
-  ctx.arc(c, c, r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = border;
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  // Ejes.
-  ctx.beginPath();
-  ctx.moveTo(c - r, c);
-  ctx.lineTo(c + r, c);
-  ctx.moveTo(c, c - r);
-  ctx.lineTo(c, c + r);
-  ctx.stroke();
-
-  // Zona exterior.
-  ctx.setLineDash([4, 4]);
-  ctx.strokeStyle = cssVar("--muted");
-  ctx.beginPath();
-  ctx.arc(c, c, r * config.zona_exterior, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.setLineDash([]);
-
-  // Zona muerta.
-  ctx.fillStyle = cssVar("--accent-soft");
-  ctx.beginPath();
-  ctx.arc(c, c, r * config.zona_muerta, 0, Math.PI * 2);
-  ctx.fill();
-
+// Punto hueco: posición física; punto relleno: lo que recibe el juego.
+function drawStick(card, raw, processed) {
+  const rawDot = $(".pos-raw", card);
+  const outDot = $(".pos-out", card);
+  rawDot.setAttribute("visibility", raw ? "visible" : "hidden");
   if (raw) {
-    // Posición física del stick.
-    ctx.fillStyle = cssVar("--raw");
-    ctx.beginPath();
-    ctx.arc(c + (raw[0] / 32767) * r, c - (raw[1] / 32767) * r, 5, 0, Math.PI * 2);
-    ctx.fill();
+    rawDot.setAttribute("cx", (100 + (raw[0] / 32767) * STICK_RADIUS).toFixed(1));
+    rawDot.setAttribute("cy", (100 - (raw[1] / 32767) * STICK_RADIUS).toFixed(1));
   }
-  if (processed) {
-    // Lo que recibe el juego con este perfil.
-    ctx.fillStyle = accent;
-    ctx.beginPath();
-    ctx.arc(c + processed[0] * r, c - processed[1] * r, 6, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  const [x, y] = processed ?? [0, 0];
+  outDot.setAttribute("cx", (100 + x * STICK_RADIUS).toFixed(1));
+  outDot.setAttribute("cy", (100 - y * STICK_RADIUS).toFixed(1));
 }
 
 function setPill(id, kind, text) {
@@ -709,8 +749,35 @@ function setPill(id, kind, text) {
 function showNotice(text, kind = "") {
   const notice = $("#notice");
   notice.hidden = !text;
-  notice.textContent = text || "";
-  notice.className = `notice ${kind}`;
+  $("#notice-text").textContent = text || "";
+  notice.className = `alert ${kind}`;
+}
+
+const PAD_ALERTS = {
+  2: [
+    "Falta el driver ViGEmBus",
+    "Sin él no se puede crear el mando virtual: solo funcionan las acciones de teclado y ratón.",
+  ],
+  3: [
+    "Error del mando virtual",
+    "El mando físico está conectado, pero los juegos podrían no recibir la entrada hasta que se resuelva.",
+  ],
+};
+
+let retryClicked = false;
+
+function showPadAlert(virtualPad) {
+  const alert = PAD_ALERTS[virtualPad];
+  $("#pad-alert").hidden = !alert;
+  if (!alert) {
+    retryClicked = false;
+    return;
+  }
+  $("#pad-alert-title").textContent = alert[0];
+  // El servicio ya reintenta solo cada segundo; el botón solo lo recuerda.
+  $("#pad-alert-text").textContent = retryClicked
+    ? "El servicio lo reintenta automáticamente cada segundo. Si no se resuelve, sal del servicio desde la bandeja y vuelve a abrirlo."
+    : alert[1];
 }
 
 function updateActiveLine(view) {
@@ -736,16 +803,18 @@ function updateLive(view) {
     setPill("#pill-service", "bad", "Servicio detenido");
     setPill("#pill-pad", "", "Mando");
     setPill("#pill-virtual", "", "Mando virtual");
+    showPadAlert(null);
   } else {
-    setPill("#pill-service", "ok", state.enabled ? "Servicio activo" : "Servicio (en pausa)");
-    setPill("#pill-pad", state.connected ? "ok" : "warn", state.connected ? "Mando conectado" : "Sin mando");
+    setPill("#pill-service", state.enabled ? "ok" : "warn", state.enabled ? "Servicio activo" : "Servicio en pausa");
+    setPill("#pill-pad", state.connected ? "ok" : "bad", state.connected ? "Mando conectado" : "Sin mando");
     const virtual = [
       ["", "Mando virtual"],
-      ["ok", "Mando virtual activo"],
-      ["bad", "Falta ViGEmBus"],
-      ["bad", "Error del mando virtual"],
+      ["ok", "Mando virtual"],
+      ["bad", "Mando virtual"],
+      ["bad", "Mando virtual"],
     ][state.virtual_pad] || ["", "Mando virtual"];
     setPill("#pill-virtual", virtual[0], virtual[1]);
+    showPadAlert(state.virtual_pad);
   }
   updateActiveLine(view);
 
@@ -761,20 +830,21 @@ function updateLive(view) {
 
   // La vista en vivo se dibuja con el perfil que se está editando.
   const live = view.service && state.connected ? state : null;
-  for (const [card, stick, raw, processed] of [
-    [$('[data-stick="stick_izquierdo"]'), "stick_izquierdo", live?.raw_left, view.left],
-    [$('[data-stick="stick_derecho"]'), "stick_derecho", live?.raw_right, view.right],
+  for (const [card, raw, processed] of [
+    [$('[data-stick="stick_izquierdo"]'), live?.raw_left, view.left],
+    [$('[data-stick="stick_derecho"]'), live?.raw_right, view.right],
   ]) {
-    drawStick($("canvas", card), profile[stick], raw, processed);
-    $(".readout", card).textContent = raw && processed
-      ? `Físico (${raw[0]}, ${raw[1]})  ->  juego (${processed[0].toFixed(2)}, ${processed[1].toFixed(2)})`
-      : "Sin datos del mando";
+    const shown = raw && processed;
+    drawStick(card, shown ? raw : null, shown ? processed : null);
+    $("[data-raw]", card).textContent = shown ? `${raw[0]}, ${raw[1]}` : "0, 0";
+    $("[data-game]", card).textContent = shown
+      ? `${processed[0].toFixed(2)}, ${processed[1].toFixed(2)}`
+      : "0.00, 0.00";
   }
 
   const threshold = profile.gatillos.umbral;
   for (const [side, value] of [["lt", live?.raw_lt ?? 0], ["rt", live?.raw_rt ?? 0]]) {
     $(`#bar-${side}`).style.width = `${(value / 255) * 100}%`;
-    $(`#mark-${side}`).style.left = `${(threshold / 255) * 100}%`;
     $(`#val-${side}`).textContent = value;
   }
 
@@ -843,7 +913,16 @@ async function init() {
 
   $("#save").addEventListener("click", save);
   $("#discard").addEventListener("click", discard);
-  $("#test-vibration").addEventListener("click", () => invoke("test_vibration"));
+  $("#test-vibration").addEventListener("click", () => {
+    $("#test-label").textContent = "Vibrando…";
+    invoke("test_vibration");
+    setTimeout(() => {
+      $("#test-label").textContent = "Probar vibración";
+    }, 600);
+  });
+  $("#pad-retry").addEventListener("click", () => {
+    retryClicked = true;
+  });
   document.addEventListener("keydown", (event) => {
     if (event.ctrlKey && event.key.toLowerCase() === "s" && isDirty()) {
       event.preventDefault();

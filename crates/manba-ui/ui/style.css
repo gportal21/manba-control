@@ -1,3 +1,19 @@
+/* Geist y Geist Mono (SIL OFL 1.1, ver fonts/LICENSE.txt) van dentro de la
+   app: no se descarga nada al abrirla. */
+@font-face {
+  font-family: Geist;
+  src: url("fonts/Geist-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("fonts/GeistMono-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: block;
+}
+
 :root {
   --bg-app: #0c0e10;
   --bg-header: #0f1113;

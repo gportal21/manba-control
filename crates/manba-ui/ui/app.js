@@ -9,6 +9,7 @@ const MOUSE_ACTIONS = [
 ];
 const REASON_GAME = 1;
 const REASON_SHORTCUT = 2;
+const TURBO_RATES = [5, 10, 15, 20, 30];
 
 let options = null;
 let currentName = null;
@@ -124,6 +125,63 @@ function selectAction(select, value) {
   }
 }
 
+function findKey(object, name) {
+  return Object.keys(object).find((k) => k.toLowerCase() === name.toLowerCase());
+}
+
+function turboSelect(control) {
+  const select = document.createElement("select");
+  select.className = "turbo";
+  select.setAttribute("aria-label", `Turbo de ${control}`);
+  for (const [value, label] of [["", "Sin turbo"], ...TURBO_RATES.map((r) => [String(r), `Turbo ${r}/s`])]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    select.append(option);
+  }
+  select.addEventListener("change", () => {
+    const key = findKey(profile.turbo, control);
+    if (key) delete profile.turbo[key];
+    if (select.value) profile.turbo[control] = Number(select.value);
+    onChange();
+  });
+  return select;
+}
+
+function setTurbo(select, rate) {
+  const value = rate ? String(rate) : "";
+  if (value && ![...select.options].some((o) => o.value === value)) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = `Turbo ${value}/s`;
+    select.append(option);
+  }
+  select.value = value;
+}
+
+// Las macros del perfil aparecen como acciones en todas las filas.
+function refreshMacroOptions() {
+  const names = Object.keys(profile.macros);
+  for (const row of $$(".button-row")) {
+    const select = $("select:not(.turbo)", row);
+    $("optgroup[data-macros]", select)?.remove();
+    if (names.length) {
+      const group = document.createElement("optgroup");
+      group.label = "Macros";
+      group.dataset.macros = "";
+      for (const name of names) {
+        const option = document.createElement("option");
+        option.value = `macro:${name}`;
+        option.textContent = `Macro: ${name}`;
+        group.append(option);
+      }
+      select.insertBefore(group, select.children[2]);
+    }
+    const key = findKey(profile.botones, row.dataset.control);
+    selectAction(select, key ? profile.botones[key] : "");
+  }
+}
+
 function buildButtons() {
   const container = $("#buttons");
   for (const control of options.controls) {
@@ -148,7 +206,7 @@ function buildButtons() {
       onChange();
     });
 
-    row.append(dot, name, select);
+    row.append(dot, name, select, turboSelect(control.name));
     container.append(row);
   }
 }
@@ -168,10 +226,12 @@ function fillForm() {
   }
   for (const row of $$(".button-row")) {
     const name = row.dataset.control;
-    const key = Object.keys(profile.botones).find((k) => k.toLowerCase() === name.toLowerCase());
-    selectAction($("select", row), key ? profile.botones[key] : "");
+    const turboKey = findKey(profile.turbo, name);
+    setTurbo($(".turbo", row), turboKey ? profile.turbo[turboKey] : null);
   }
+  refreshMacroOptions();
   renderGames();
+  renderMacros();
   refreshLabels();
 }
 
@@ -184,7 +244,9 @@ function refreshLabels() {
     $(".mouse-only", card).hidden = mode !== "raton";
   }
   for (const row of $$(".button-row")) {
-    row.classList.toggle("changed", $("select", row).value !== "");
+    row.classList.toggle("changed", $("select:not(.turbo)", row).value !== "");
+    const turbo = $(".turbo", row);
+    turbo.classList.toggle("on", turbo.value !== "");
   }
 }
 
@@ -221,6 +283,142 @@ function discard() {
   profile = clone(saved);
   fillForm();
   onChange();
+}
+
+// --- Macros -----------------------------------------------------------------
+
+function stepText(step) {
+  return step.pulsar.join(" + ");
+}
+
+function parseStepText(text) {
+  return text.split("+").map((part) => part.trim()).filter(Boolean);
+}
+
+function uniqueMacroName(base) {
+  let name = base;
+  for (let n = 2; findKey(profile.macros, name); n++) name = `${base} ${n}`;
+  return name;
+}
+
+// Cambiar el nombre actualiza también los botones que lanzaban la macro.
+function renameMacro(oldName, newName) {
+  newName = newName.trim();
+  if (!newName || newName === oldName) return false;
+  if (findKey(profile.macros, newName)) return false;
+  const entries = Object.entries(profile.macros).map(([k, v]) => [k === oldName ? newName : k, v]);
+  profile.macros = Object.fromEntries(entries);
+  for (const [control, action] of Object.entries(profile.botones)) {
+    if (action.toLowerCase() === `macro:${oldName}`.toLowerCase()) profile.botones[control] = `macro:${newName}`;
+  }
+  return true;
+}
+
+function renderMacros() {
+  const container = $("#macros");
+  container.replaceChildren(
+    ...Object.entries(profile.macros).map(([name, macro]) => {
+      const box = document.createElement("div");
+      box.className = "macro";
+
+      const head = document.createElement("div");
+      head.className = "macro-head";
+      const nameInput = document.createElement("input");
+      nameInput.type = "text";
+      nameInput.value = name;
+      nameInput.maxLength = 32;
+      nameInput.setAttribute("aria-label", "Nombre de la macro");
+      nameInput.addEventListener("change", () => {
+        if (renameMacro(name, nameInput.value)) {
+          renderMacros();
+          refreshMacroOptions();
+          onChange();
+        } else {
+          nameInput.value = name;
+        }
+      });
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "secondary danger";
+      remove.textContent = "Eliminar macro";
+      remove.addEventListener("click", () => {
+        delete profile.macros[name];
+        // Los botones que la lanzaban vuelven a su función normal.
+        for (const [control, action] of Object.entries(profile.botones)) {
+          if (action.toLowerCase() === `macro:${name}`.toLowerCase()) delete profile.botones[control];
+        }
+        renderMacros();
+        refreshMacroOptions();
+        onChange();
+      });
+      head.append(nameInput, remove);
+      box.append(head);
+
+      macro.pasos.forEach((step, index) => {
+        const row = document.createElement("div");
+        row.className = "macro-step";
+        const number = document.createElement("span");
+        number.className = "index";
+        number.textContent = index + 1;
+        const actions = document.createElement("input");
+        actions.type = "text";
+        actions.value = stepText(step);
+        actions.placeholder = "Espera (sin acciones)";
+        actions.spellcheck = false;
+        actions.setAttribute("aria-label", `Acciones del paso ${index + 1}`);
+        actions.addEventListener("input", () => {
+          step.pulsar = parseStepText(actions.value);
+          onChange();
+        });
+        const ms = document.createElement("input");
+        ms.type = "number";
+        ms.min = "1";
+        ms.max = "5000";
+        ms.value = step.ms;
+        ms.title = "Duración en milisegundos";
+        ms.setAttribute("aria-label", `Duración del paso ${index + 1} en milisegundos`);
+        ms.addEventListener("input", () => {
+          step.ms = Math.round(Number(ms.value)) || 0;
+          onChange();
+        });
+        const drop = document.createElement("button");
+        drop.type = "button";
+        drop.className = "icon-button";
+        drop.textContent = "×";
+        drop.setAttribute("aria-label", `Quitar el paso ${index + 1}`);
+        drop.disabled = macro.pasos.length === 1;
+        drop.addEventListener("click", () => {
+          macro.pasos.splice(index, 1);
+          renderMacros();
+          onChange();
+        });
+        row.append(number, actions, ms, drop);
+        box.append(row);
+      });
+
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "secondary";
+      add.textContent = "Añadir paso";
+      add.addEventListener("click", () => {
+        macro.pasos.push({ pulsar: [], ms: 50 });
+        renderMacros();
+        onChange();
+      });
+      box.append(add);
+      return box;
+    }),
+  );
+}
+
+function bindMacros() {
+  $("#macro-new").addEventListener("click", () => {
+    const name = uniqueMacroName("Macro");
+    profile.macros[name] = { pasos: [{ pulsar: ["A"], ms: 60 }] };
+    renderMacros();
+    refreshMacroOptions();
+    onChange();
+  });
 }
 
 // --- Juegos -----------------------------------------------------------------
@@ -624,6 +822,8 @@ function defaultProfile() {
     gatillos: { umbral: 30 },
     vibracion: { intensidad: 1 },
     botones: {},
+    turbo: {},
+    macros: {},
   };
 }
 
@@ -633,6 +833,7 @@ async function init() {
   buildButtons();
   bindInputs();
   bindGames();
+  bindMacros();
   bindProfiles();
   await bindGeneral();
 

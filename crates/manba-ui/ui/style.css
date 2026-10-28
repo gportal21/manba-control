@@ -262,16 +262,95 @@ select {
 
 .buttons-table {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 8px 16px;
 }
 
 .button-row {
   display: grid;
-  grid-template-columns: 10px 72px 1fr;
+  grid-template-columns: 10px 64px minmax(0, 1fr) 112px;
   align-items: center;
   gap: 10px;
 }
+
+.button-row .turbo.on {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.card-head h2 { margin: 0; }
+.card-head button.secondary { margin-bottom: 0; }
+
+code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+}
+
+#macros:empty::before {
+  content: "Todavía no hay macros en este perfil.";
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.macro {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+
+.macro-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.macro-step {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 88px 28px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.macro-step .index {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.macro-step input[type="number"] {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+}
+
+.icon-button {
+  padding: 4px;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--muted);
+}
+
+.macro .secondary { margin-bottom: 0; }
 
 .button-row .dot {
   width: 10px;

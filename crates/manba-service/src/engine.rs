@@ -149,8 +149,11 @@ fn pulse(slot: u32, count: u32) {
 
 /// Bucle principal del motor. `notify` avisa a la bandeja de que el estado cambió.
 pub fn run(shared: &Shared, store: &Store, notify: impl Fn()) {
-    let passthrough = Mapper::default();
+    let mut passthrough = Mapper::default();
     let vibration = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+    // Reloj del turbo y las macros.
+    let clock = Instant::now();
+    let mut last_active: Option<String> = None;
 
     let mut profiles: Vec<Loaded> = vec![Loaded::fallback()];
     let mut config = AppConfig::default();
@@ -294,7 +297,12 @@ pub fn run(shared: &Shared, store: &Store, notify: impl Fn()) {
             (index, live::REASON_BASE)
         };
         active_index = index;
-        let profile = &profiles[index];
+        let profile = &mut profiles[index];
+        if last_active.as_deref() != Some(profile.name.as_str()) {
+            // Un perfil recién activado empieza sin macros a medias.
+            profile.mapper.reset();
+            last_active = Some(profile.name.clone());
+        }
         vibration.store(profile.vibration.to_bits(), Ordering::Relaxed);
 
         let now = Instant::now();
@@ -311,8 +319,8 @@ pub fn run(shared: &Shared, store: &Store, notify: impl Fn()) {
         snapshot.set_active_profile(&profile.name);
 
         if let (Some((_, state)), Some(input)) = (&active, &input) {
-            let mapper = if enabled { &profile.mapper } else { &passthrough };
-            let mapped = mapper.map(input);
+            let mapper = if enabled { &mut profile.mapper } else { &mut passthrough };
+            let mapped = mapper.map(input, clock.elapsed().as_millis() as u64);
 
             if let Some(virtual_pad) = &mut pad {
                 if last_pad != Some(mapped.pad) {
@@ -361,7 +369,7 @@ pub fn run(shared: &Shared, store: &Store, notify: impl Fn()) {
         status.profiles = profiles.iter().map(|p| p.name.clone()).collect();
         status.base = config.base_profile.clone();
         status.shortcuts = config.shortcuts;
-        status.active = profile.name.clone();
+        status.active = profiles[index].name.clone();
         status.reason = reason;
         status.game = (reason == live::REASON_GAME).then(|| foreground.clone()).flatten();
         if published.as_ref() != Some(&status) {
@@ -370,7 +378,7 @@ pub fn run(shared: &Shared, store: &Store, notify: impl Fn()) {
             notify();
         }
 
-        let interval = if active.is_some() { profile.interval } else { IDLE_INTERVAL };
+        let interval = if active.is_some() { profiles[index].interval } else { IDLE_INTERVAL };
         thread::sleep(interval);
     }
 }

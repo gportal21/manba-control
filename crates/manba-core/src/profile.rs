@@ -59,10 +59,26 @@ intensidad = 1.0
 #   una tecla                  LB = "tecla:Q"
 #   un botón del ratón         RB = "raton:izquierdo"   (izquierdo, derecho, medio)
 #   desactivar el control      Back = "ninguno"
+#   lanzar una macro           Y = "macro:combo"
 #
 # Teclas: A-Z, 0-9, F1-F12, Esc, Tab, Intro, Espacio, Shift, Ctrl, Alt,
 # Retroceso, BloqMayus, Insert, Supr, Inicio, Fin, RePag, AvPag,
 # FlechaArriba, FlechaAbajo, FlechaIzquierda, FlechaDerecha
+
+[turbo]
+# Repite un control mientras se mantiene pulsado, en pulsaciones por
+# segundo (1-30). Ejemplo: A = 15
+
+# Macros: secuencias que se lanzan con un control asignado a "macro:<nombre>".
+# Cada paso mantiene pulsadas sus acciones durante "ms" milisegundos; un paso
+# sin acciones es una espera. Ejemplo:
+#
+# [macros.combo]
+# pasos = [
+#   { pulsar = ["A"], ms = 60 },
+#   { pulsar = [], ms = 40 },
+#   { pulsar = ["B", "tecla:Q"], ms = 60 },
+# ]
 "#;
 
 const SAVED_HEADER: &str = "# Perfil de Manba Control, guardado desde la ventana de configuración.\n\
@@ -88,7 +104,34 @@ pub struct Profile {
     /// Se valida al construir el `Mapper`.
     #[serde(rename = "botones")]
     pub buttons: BTreeMap<String, String>,
+    /// Control -> pulsaciones por segundo.
+    #[serde(rename = "turbo")]
+    pub turbo: BTreeMap<String, f32>,
+    #[serde(rename = "macros")]
+    pub macros: BTreeMap<String, Macro>,
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Macro {
+    #[serde(rename = "pasos")]
+    pub steps: Vec<MacroStep>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MacroStep {
+    /// Acciones que se mantienen pulsadas durante el paso, con la misma
+    /// sintaxis que las reasignaciones. Vacío = espera.
+    #[serde(rename = "pulsar", default)]
+    pub press: Vec<String>,
+    #[serde(rename = "ms")]
+    pub duration_ms: u32,
+}
+
+pub const MAX_TURBO_HZ: f32 = 30.0;
+pub const MAX_MACRO_STEPS: usize = 64;
+pub const MAX_STEP_MS: u32 = 5000;
 
 impl Default for Profile {
     fn default() -> Self {
@@ -100,6 +143,8 @@ impl Default for Profile {
             triggers: TriggerConfig::default(),
             vibration: VibrationConfig::default(),
             buttons: BTreeMap::new(),
+            turbo: BTreeMap::new(),
+            macros: BTreeMap::new(),
         }
     }
 }
@@ -231,6 +276,30 @@ impl Profile {
         if !(0.0..=2.0).contains(&self.vibration.intensity) {
             return Err("vibracion: intensidad debe estar entre 0 y 2".into());
         }
+        for (control, hz) in &self.turbo {
+            if !(1.0..=MAX_TURBO_HZ).contains(hz) {
+                return Err(format!("turbo de {control}: debe estar entre 1 y {MAX_TURBO_HZ} pulsaciones por segundo"));
+            }
+        }
+        for (name, macro_) in &self.macros {
+            let name = name.trim();
+            if name.is_empty() || name.len() > 32 {
+                return Err("el nombre de una macro debe tener entre 1 y 32 letras".into());
+            }
+            if macro_.steps.is_empty() || macro_.steps.len() > MAX_MACRO_STEPS {
+                return Err(format!("macro {name}: debe tener entre 1 y {MAX_MACRO_STEPS} pasos"));
+            }
+            if let Some(step) = macro_
+                .steps
+                .iter()
+                .find(|s| !(1..=MAX_STEP_MS).contains(&s.duration_ms))
+            {
+                return Err(format!(
+                    "macro {name}: la duración de cada paso debe estar entre 1 y {MAX_STEP_MS} ms (hay uno de {})",
+                    step.duration_ms
+                ));
+            }
+        }
         Ok(())
     }
 }
@@ -273,6 +342,17 @@ mod tests {
         profile.vibration.intensity = 0.5;
         profile.buttons.insert("A".into(), "tecla:Espacio".into());
         profile.games.push("EldenRing.exe".into());
+        profile.turbo.insert("RB".into(), 12.0);
+        profile.macros.insert(
+            "combo".into(),
+            Macro {
+                steps: vec![
+                    MacroStep { press: vec!["A".into()], duration_ms: 60 },
+                    MacroStep { press: vec![], duration_ms: 40 },
+                    MacroStep { press: vec!["B".into(), "tecla:Q".into()], duration_ms: 60 },
+                ],
+            },
+        );
 
         let path = std::env::temp_dir().join(format!("manba-perfil-{}.toml", std::process::id()));
         profile.save(&path).unwrap();

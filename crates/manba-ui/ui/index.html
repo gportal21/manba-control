@@ -144,8 +144,17 @@
 
     <section class="card">
       <h2>Botones</h2>
-      <p class="hint">Elige qué hace cada control. El punto se ilumina al pulsarlo en el mando.</p>
+      <p class="hint">Elige qué hace cada control y, si quieres, un turbo que lo repita mientras lo mantienes pulsado. El punto se ilumina al pulsarlo en el mando.</p>
       <div class="buttons-table" id="buttons"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Macros</h2>
+        <button class="secondary" type="button" id="macro-new">Nueva macro</button>
+      </div>
+      <p class="hint">Una macro es una secuencia que se lanza con un botón: asígnala en la tabla de botones. Cada paso mantiene pulsadas sus acciones durante los milisegundos indicados; un paso sin acciones es una espera. Escribe las acciones separadas por +, por ejemplo <code>A + tecla:Q</code> o <code>raton:izquierdo</code>.</p>
+      <div id="macros"></div>
     </section>
   </main>
 

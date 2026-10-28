@@ -39,6 +39,11 @@ velocidad_raton = 1500.0
 # Por debajo de este valor (0-255) el gatillo se ignora.
 umbral = 30
 
+[vibracion]
+# Intensidad de la vibración que envían los juegos: 0 = desactivada,
+# 1 = normal, hasta 2 para reforzar vibraciones débiles.
+intensidad = 1.0
+
 [botones]
 # Reasignaciones, en la forma  control = "acción".
 # Lo que no aparezca aquí funciona igual que siempre.
@@ -67,6 +72,8 @@ pub struct Profile {
     pub right_stick: StickConfig,
     #[serde(rename = "gatillos")]
     pub triggers: TriggerConfig,
+    #[serde(rename = "vibracion")]
+    pub vibration: VibrationConfig,
     /// Control de origen -> acción, tal como se escribió en el archivo.
     /// Se valida al construir el `Mapper`.
     #[serde(rename = "botones")]
@@ -80,6 +87,7 @@ impl Default for Profile {
             left_stick: StickConfig::default(),
             right_stick: StickConfig::default(),
             triggers: TriggerConfig::default(),
+            vibration: VibrationConfig::default(),
             buttons: BTreeMap::new(),
         }
     }
@@ -138,6 +146,19 @@ impl Default for TriggerConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct VibrationConfig {
+    #[serde(rename = "intensidad")]
+    pub intensity: f32,
+}
+
+impl Default for VibrationConfig {
+    fn default() -> Self {
+        Self { intensity: 1.0 }
+    }
+}
+
 impl Profile {
     pub fn parse(text: &str) -> Result<Self, String> {
         let profile: Self = toml::from_str(text).map_err(|e| e.message().to_string())?;
@@ -173,6 +194,9 @@ impl Profile {
             if !(stick.mouse_speed >= 0.0 && stick.mouse_speed.is_finite()) {
                 return Err(format!("{name}: velocidad_raton no puede ser negativa"));
             }
+        }
+        if !(0.0..=2.0).contains(&self.vibration.intensity) {
+            return Err("vibracion: intensidad debe estar entre 0 y 2".into());
         }
         Ok(())
     }
@@ -229,5 +253,6 @@ mod tests {
         assert!(Profile::parse("intervalo_ms = 0\n").is_err());
         assert!(Profile::parse("[stick_izquierdo]\nzona_muerta = 1.0\n").is_err());
         assert!(Profile::parse("[stick_izquierdo]\ncurva = 0\n").is_err());
+        assert!(Profile::parse("[vibracion]\nintensidad = 3.0\n").is_err());
     }
 }

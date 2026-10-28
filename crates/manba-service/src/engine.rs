@@ -1,8 +1,8 @@
 //! Hilo de trabajo: lee el mando, aplica el perfil y envía el resultado.
 
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -60,6 +60,7 @@ pub fn run(shared: &Shared, profile_path: &Path, notify: impl Fn()) {
     let passthrough = Mapper::default();
     let mut mapper = Mapper::default();
     let mut interval = Duration::from_millis(1);
+    let vibration = Arc::new(AtomicU32::new(1.0f32.to_bits()));
 
     let mut poller = Poller::new();
     let mut events = Vec::new();
@@ -79,6 +80,7 @@ pub fn run(shared: &Shared, profile_path: &Path, notify: impl Fn()) {
             match loaded {
                 Ok((profile, new_mapper)) => {
                     interval = Duration::from_millis(profile.poll_interval_ms);
+                    vibration.store(profile.vibration.intensity.to_bits(), Ordering::Relaxed);
                     mapper = new_mapper;
                     status.profile_error = None;
                 }
@@ -93,7 +95,7 @@ pub fn run(shared: &Shared, profile_path: &Path, notify: impl Fn()) {
             match *event {
                 Event::Connected(slot) if active.is_none() => {
                     active = Some((slot, GamepadState::default()));
-                    match VirtualPad::connect() {
+                    match VirtualPad::connect(slot, Arc::clone(&vibration)) {
                         Ok(virtual_pad) => {
                             pad = Some(virtual_pad);
                             status.virtual_pad = PadStatus::Active;

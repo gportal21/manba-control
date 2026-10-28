@@ -1,9 +1,13 @@
 //! Salidas hacia el sistema: mando virtual (ViGEmBus) y teclado/ratón (SendInput).
 
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use manba_core::keys::Key;
 use manba_core::mapping::{Mapped, MouseButton, PadOutput};
+use manba_core::xinput;
 use vigem_client::{Client, TargetId, XButtons, XGamepad, Xbox360Wired};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
@@ -19,12 +23,19 @@ pub enum VirtualPadError {
 }
 
 /// Mando de Xbox 360 virtual que ven los juegos.
+///
+/// La vibración que los juegos envían al mando virtual se reenvía al mando
+/// físico desde un hilo que espera bloqueado a cada aviso del driver.
 pub struct VirtualPad {
     target: Xbox360Wired<Client>,
+    physical_slot: u32,
+    rumble: Option<JoinHandle<()>>,
 }
 
 impl VirtualPad {
-    pub fn connect() -> Result<Self, VirtualPadError> {
+    /// `intensity` es el multiplicador de vibración del perfil, como bits de
+    /// un `f32`, para poder cambiarlo al recargar el perfil.
+    pub fn connect(physical_slot: u32, intensity: Arc<AtomicU32>) -> Result<Self, VirtualPadError> {
         let client = Client::connect().map_err(|e| match e {
             vigem_client::Error::BusNotFound => VirtualPadError::NoDriver,
             other => VirtualPadError::Other(format!("{other:?}")),
@@ -42,7 +53,26 @@ impl VirtualPad {
         };
         target.update(&nudge).map_err(other)?;
         target.update(&XGamepad::default()).map_err(other)?;
-        Ok(Self { target })
+
+        // Sin vibración el mando sigue siendo útil, así que un fallo aquí no
+        // impide crearlo.
+        let rumble = target.request_notification().ok().map(|request| {
+            request.spawn_thread(move |_, data| {
+                let factor = f32::from_bits(intensity.load(Ordering::Relaxed));
+                let scale = |motor: u8| (motor as f32 * 257.0 * factor).min(65535.0) as u16;
+                let _ = xinput::set_vibration(
+                    physical_slot,
+                    scale(data.large_motor),
+                    scale(data.small_motor),
+                );
+            })
+        });
+
+        Ok(Self {
+            target,
+            physical_slot,
+            rumble,
+        })
     }
 
     pub fn update(&mut self, pad: &PadOutput) -> Result<(), String> {
@@ -61,7 +91,12 @@ impl VirtualPad {
 
 impl Drop for VirtualPad {
     fn drop(&mut self) {
+        // Al desconectar, el driver aborta la espera y el hilo de vibración termina.
         let _ = self.target.unplug();
+        if let Some(rumble) = self.rumble.take() {
+            let _ = rumble.join();
+        }
+        let _ = xinput::set_vibration(self.physical_slot, 0, 0);
     }
 }
 

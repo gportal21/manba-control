@@ -12,7 +12,7 @@ manba-core = { path = "crates/manba-core" }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 tray-icon = "0.19"
-vigem-client = "0.1.4"
+vigem-client = { version = "0.1.4", features = ["unstable_xtarget_notification"] }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_UI_Input_XboxController",

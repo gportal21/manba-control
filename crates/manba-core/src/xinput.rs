@@ -77,6 +77,14 @@ pub struct GamepadState {
     pub right_stick: (i16, i16),
 }
 
+impl GamepadState {
+    /// Compara la entrada sin tener en cuenta el número de paquete: el Manba
+    /// One lo incrementa en cada lectura aunque no cambie nada.
+    pub fn same_input(&self, other: &Self) -> bool {
+        Self { packet: 0, ..*self } == Self { packet: 0, ..*other }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum XInputError {
     NotConnected,
@@ -230,7 +238,7 @@ impl Poller {
                             events.push(Event::Connected(slot));
                             events.push(Event::State(slot, state));
                         }
-                        Some(old) if old.packet != state.packet => {
+                        Some(old) if old.packet != state.packet && !old.same_input(&state) => {
                             events.push(Event::State(slot, state));
                         }
                         Some(_) => {}
@@ -256,6 +264,15 @@ mod tests {
         let buttons = Buttons(Buttons::A | Buttons::RB | Buttons::DPAD_LEFT);
         let names: Vec<_> = buttons.pressed_names().collect();
         assert_eq!(names, ["A", "RB", "Izquierda"]);
+    }
+
+    #[test]
+    fn same_input_ignores_packet_number() {
+        let a = GamepadState { packet: 1, ..Default::default() };
+        let b = GamepadState { packet: 2, ..a };
+        assert!(a.same_input(&b));
+        let c = GamepadState { left_trigger: 10, ..b };
+        assert!(!a.same_input(&c));
     }
 
     #[test]

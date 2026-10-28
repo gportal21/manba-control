@@ -61,6 +61,9 @@ intensidad = 1.0
 # FlechaArriba, FlechaAbajo, FlechaIzquierda, FlechaDerecha
 "#;
 
+const SAVED_HEADER: &str = "# Perfil de Manba Control, guardado desde la ventana de configuración.\n\
+# También se puede editar a mano: el servicio aplica los cambios al guardar.\n\n";
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Profile {
@@ -172,7 +175,21 @@ impl Profile {
         Self::parse(&text)
     }
 
-    fn validate(&self) -> Result<(), String> {
+    /// Guarda el perfil. Se escribe en un archivo temporal y se renombra,
+    /// para que el servicio nunca lea un archivo a medio escribir.
+    pub fn save(&self, path: &Path) -> Result<(), String> {
+        self.validate()?;
+        let body = toml::to_string_pretty(self).map_err(|e| e.to_string())?;
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        let temp = path.with_extension("toml.tmp");
+        std::fs::write(&temp, format!("{SAVED_HEADER}{body}"))
+            .and_then(|()| std::fs::rename(&temp, path))
+            .map_err(|e| format!("no se pudo guardar {}: {e}", path.display()))
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
         if !(1..=16).contains(&self.poll_interval_ms) {
             return Err("intervalo_ms debe estar entre 1 y 16".into());
         }
@@ -241,6 +258,29 @@ mod tests {
         let profile = Profile::parse("[botones]\nA = \"B\"\nLB = \"tecla:Q\"\n").unwrap();
         assert_eq!(profile.buttons["A"], "B");
         assert_eq!(profile.buttons["LB"], "tecla:Q");
+    }
+
+    #[test]
+    fn save_and_load_round_trip() {
+        let mut profile = Profile::default();
+        profile.right_stick.mode = StickMode::Mouse;
+        profile.vibration.intensity = 0.5;
+        profile.buttons.insert("A".into(), "tecla:Espacio".into());
+
+        let path = std::env::temp_dir().join(format!("manba-perfil-{}.toml", std::process::id()));
+        profile.save(&path).unwrap();
+        let loaded = Profile::load(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(loaded.unwrap(), profile);
+    }
+
+    #[test]
+    fn save_rejects_invalid_profile() {
+        let mut profile = Profile::default();
+        profile.poll_interval_ms = 0;
+        let path = std::env::temp_dir().join("manba-perfil-invalido.toml");
+        assert!(profile.save(&path).is_err());
+        assert!(!path.exists());
     }
 
     #[test]

@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/manba-core", "crates/manba-probe", "crates/manba-service"]
+members = [
+    "crates/manba-core",
+    "crates/manba-probe",
+    "crates/manba-service",
+    "crates/manba-ui",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +15,8 @@ license = "MIT"
 [workspace.dependencies]
 manba-core = { path = "crates/manba-core" }
 serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", features = ["custom-protocol"] }
+tauri-build = "2"
 toml = "0.8"
 tray-icon = "0.19"
 vigem-client = { version = "0.1.4", features = ["unstable_xtarget_notification"] }

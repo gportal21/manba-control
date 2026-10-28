@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manba Control</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
+        <circle cx="16" cy="16" r="13" fill="none" stroke="currentColor" stroke-width="4"/>
+        <circle cx="16" cy="16" r="5" fill="currentColor"/>
+      </svg>
+      <span>Manba Control</span>
+    </div>
+    <div class="pills">
+      <span class="pill" id="pill-service"><i></i><b>Servicio</b></span>
+      <span class="pill" id="pill-pad"><i></i><b>Mando</b></span>
+      <span class="pill" id="pill-virtual"><i></i><b>Mando virtual</b></span>
+    </div>
+  </header>
+
+  <main>
+    <div class="notice" id="notice" hidden></div>
+
+    <section class="grid sticks">
+      <article class="card" data-stick="stick_izquierdo">
+        <h2>Stick izquierdo</h2>
+        <div class="stick-body">
+          <canvas class="stick-canvas" width="180" height="180"></canvas>
+          <div class="fields"></div>
+        </div>
+        <p class="readout"></p>
+      </article>
+      <article class="card" data-stick="stick_derecho">
+        <h2>Stick derecho</h2>
+        <div class="stick-body">
+          <canvas class="stick-canvas" width="180" height="180"></canvas>
+          <div class="fields"></div>
+        </div>
+        <p class="readout"></p>
+      </article>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>Gatillos</h2>
+        <div class="trigger-row">
+          <span class="trigger-label">LT</span>
+          <div class="bar"><div class="bar-fill" id="bar-lt"></div><div class="bar-mark" id="mark-lt"></div></div>
+          <span class="trigger-value" id="val-lt">0</span>
+        </div>
+        <div class="trigger-row">
+          <span class="trigger-label">RT</span>
+          <div class="bar"><div class="bar-fill" id="bar-rt"></div><div class="bar-mark" id="mark-rt"></div></div>
+          <span class="trigger-value" id="val-rt">0</span>
+        </div>
+        <label class="field">
+          <span>Umbral <em data-out="gatillos.umbral"></em></span>
+          <input type="range" min="0" max="200" step="1" data-path="gatillos.umbral">
+        </label>
+        <p class="hint">Por debajo del umbral el gatillo se ignora. La marca vertical lo muestra sobre la barra.</p>
+      </article>
+
+      <article class="card">
+        <h2>Vibración y lectura</h2>
+        <label class="field">
+          <span>Intensidad de vibración <em data-out="vibracion.intensidad"></em></span>
+          <input type="range" min="0" max="2" step="0.05" data-path="vibracion.intensidad">
+        </label>
+        <button class="secondary" id="test-vibration" type="button">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 8v8M20 8v8M8 5h8v14H8z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          Probar vibración
+        </button>
+        <p class="hint">La prueba usa la intensidad guardada.</p>
+        <label class="field">
+          <span>Intervalo de lectura <em data-out="intervalo_ms"></em></span>
+          <input type="range" min="1" max="16" step="1" data-path="intervalo_ms">
+        </label>
+        <p class="hint">1 ms da la mínima latencia; valores mayores gastan aún menos CPU.</p>
+      </article>
+    </section>
+
+    <section class="card">
+      <h2>Botones</h2>
+      <p class="hint">Elige qué hace cada control. El punto se ilumina al pulsarlo en el mando.</p>
+      <div class="buttons-table" id="buttons"></div>
+    </section>
+  </main>
+
+  <footer class="savebar">
+    <span class="save-status" id="save-status">Sin cambios</span>
+    <div class="save-actions">
+      <button class="secondary" id="discard" type="button" disabled>Descartar</button>
+      <button class="primary" id="save" type="button" disabled>Guardar</button>
+    </div>
+  </footer>
+
+  <template id="stick-fields">
+    <label class="field">
+      <span>Modo</span>
+      <select data-key="modo">
+        <option value="stick">Stick</option>
+        <option value="raton">Ratón</option>
+        <option value="ninguno">Desactivado</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>Zona muerta <em data-out-key="zona_muerta"></em></span>
+      <input type="range" min="0" max="0.6" step="0.01" data-key="zona_muerta">
+    </label>
+    <label class="field">
+      <span>Zona exterior <em data-out-key="zona_exterior"></em></span>
+      <input type="range" min="0.5" max="1" step="0.01" data-key="zona_exterior">
+    </label>
+    <label class="field">
+      <span>Curva <em data-out-key="curva"></em></span>
+      <input type="range" min="0.5" max="3" step="0.05" data-key="curva">
+    </label>
+    <label class="field mouse-only">
+      <span>Velocidad del ratón <em data-out-key="velocidad_raton"></em></span>
+      <input type="range" min="200" max="5000" step="50" data-key="velocidad_raton">
+    </label>
+    <label class="check">
+      <input type="checkbox" data-key="invertir_y">
+      <span>Invertir eje vertical</span>
+    </label>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>

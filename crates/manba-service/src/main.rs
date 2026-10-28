@@ -83,6 +83,7 @@ struct Tray {
     icon: TrayIcon,
     status: MenuItem,
     profile_status: MenuItem,
+    settings: MenuItem,
     enabled: CheckMenuItem,
     reload: MenuItem,
     edit: MenuItem,
@@ -93,6 +94,7 @@ impl Tray {
     fn new() -> Self {
         let status = MenuItem::new("Esperando mando", false, None);
         let profile_status = MenuItem::new("Perfil cargado", false, None);
+        let settings = MenuItem::new("Abrir configuración", true, None);
         let enabled = CheckMenuItem::new("Perfil activo", true, true, None);
         let reload = MenuItem::new("Recargar perfil", true, None);
         let edit = MenuItem::new("Editar perfil", true, None);
@@ -103,6 +105,7 @@ impl Tray {
             &status,
             &profile_status,
             &PredefinedMenuItem::separator(),
+            &settings,
             &enabled,
             &reload,
             &edit,
@@ -123,6 +126,7 @@ impl Tray {
             icon,
             status,
             profile_status,
+            settings,
             enabled,
             reload,
             edit,
@@ -157,7 +161,12 @@ impl Tray {
     }
 
     fn handle(&self, event: &MenuEvent, shared: &Shared, profile_path: &Path) {
-        if event.id == *self.enabled.id() {
+        if event.id == *self.settings.id() {
+            // La ventana se distribuye junto al servicio.
+            if let Some(dir) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf)) {
+                let _ = Command::new(dir.join("manba-ui.exe")).spawn();
+            }
+        } else if event.id == *self.enabled.id() {
             shared
                 .enabled
                 .store(self.enabled.is_checked(), Ordering::Relaxed);

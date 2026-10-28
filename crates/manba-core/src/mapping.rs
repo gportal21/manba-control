@@ -35,6 +35,11 @@ const CONTROLS: [(&str, Control); 16] = [
     ("Derecha", Control::Button(Buttons::DPAD_RIGHT)),
 ];
 
+/// Controles reasignables, con su nombre en el perfil.
+pub fn controls() -> impl Iterator<Item = (&'static str, Control)> {
+    CONTROLS.into_iter()
+}
+
 fn control_index(name: &str) -> Option<usize> {
     let name = name.trim();
     CONTROLS
@@ -235,7 +240,8 @@ fn set_trigger(pad: &mut PadOutput, trigger: Control, value: u8) {
     *slot = (*slot).max(value);
 }
 
-fn process_stick(raw: (i16, i16), config: &StickConfig) -> (f32, f32) {
+/// Aplica zona muerta, curva e inversión a un stick crudo. Devuelve -1..1.
+pub fn process_stick(raw: (i16, i16), config: &StickConfig) -> (f32, f32) {
     let (x, y) = deadzone::radial(raw.0, raw.1, config.deadzone, config.outer);
     let (x, y) = deadzone::curve(x, y, config.curve);
     (x, if config.invert_y { -y } else { y })

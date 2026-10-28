@@ -1,1 +1,3 @@
 /target
+# Esquemas que Tauri regenera al compilar
+/crates/manba-ui/gen

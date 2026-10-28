@@ -4,8 +4,9 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
+use manba_core::live::{self, LiveWriter, Snapshot};
 use manba_core::mapping::{Mapper, PadOutput};
 use manba_core::profile::Profile;
 use manba_core::xinput::{Event, GamepadState, Poller};
@@ -17,6 +18,10 @@ const IDLE_INTERVAL: Duration = Duration::from_millis(50);
 /// Tope del tiempo entre ciclos para el movimiento del cursor, por si el
 /// hilo se retrasa (evita saltos bruscos).
 const MAX_STEP: Duration = Duration::from_millis(50);
+/// Cada cuánto se mira si el archivo del perfil ha cambiado.
+const PROFILE_CHECK: Duration = Duration::from_millis(500);
+/// Cada cuánto se publica el estado aunque no cambie, como señal de vida.
+const HEARTBEAT: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum PadStatus {
@@ -25,6 +30,17 @@ pub enum PadStatus {
     Active,
     NoDriver,
     Error(String),
+}
+
+impl PadStatus {
+    fn code(&self) -> u8 {
+        match self {
+            Self::Idle => live::PAD_IDLE,
+            Self::Active => live::PAD_ACTIVE,
+            Self::NoDriver => live::PAD_NO_DRIVER,
+            Self::Error(_) => live::PAD_ERROR,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -55,12 +71,18 @@ impl Shared {
     }
 }
 
+fn modified(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
 /// Bucle principal del motor. `notify` avisa a la bandeja de que el estado cambió.
 pub fn run(shared: &Shared, profile_path: &Path, notify: impl Fn()) {
     let passthrough = Mapper::default();
     let mut mapper = Mapper::default();
     let mut interval = Duration::from_millis(1);
     let vibration = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+    let mut profile_mtime = None;
+    let mut last_profile_check = Instant::now();
 
     let mut poller = Poller::new();
     let mut events = Vec::new();
@@ -73,8 +95,22 @@ pub fn run(shared: &Shared, profile_path: &Path, notify: impl Fn()) {
     let mut published = Status::default();
     let mut last_tick = Instant::now();
 
+    let mut live_writer = LiveWriter::create();
+    let mut last_snapshot = Snapshot::default();
+    let mut last_live_write: Option<Instant> = None;
+
     while !shared.stop.load(Ordering::Relaxed) {
+        // Recarga automática cuando cambia el archivo (por ejemplo, al
+        // guardar desde la ventana de configuración).
+        if last_profile_check.elapsed() >= PROFILE_CHECK {
+            last_profile_check = Instant::now();
+            let mtime = modified(profile_path);
+            if mtime != profile_mtime {
+                shared.reload.store(true, Ordering::Relaxed);
+            }
+        }
         if shared.reload.swap(false, Ordering::Relaxed) {
+            profile_mtime = modified(profile_path);
             let loaded = Profile::load(profile_path)
                 .and_then(|profile| Mapper::new(&profile).map(|m| (profile, m)));
             match loaded {
@@ -133,12 +169,15 @@ pub fn run(shared: &Shared, profile_path: &Path, notify: impl Fn()) {
         let elapsed = (now - last_tick).min(MAX_STEP);
         last_tick = now;
 
+        let enabled = shared.enabled.load(Ordering::Relaxed);
+        let mut snapshot = Snapshot {
+            enabled,
+            profile_ok: status.profile_error.is_none(),
+            ..Default::default()
+        };
+
         if let Some((_, state)) = &active {
-            let current = if shared.enabled.load(Ordering::Relaxed) {
-                &mapper
-            } else {
-                &passthrough
-            };
+            let current = if enabled { &mapper } else { &passthrough };
             let mapped = current.map(state);
 
             if let Some(virtual_pad) = &mut pad {
@@ -155,6 +194,33 @@ pub fn run(shared: &Shared, profile_path: &Path, notify: impl Fn()) {
                 }
             }
             kbm.apply(&mapped, elapsed);
+
+            snapshot.connected = true;
+            snapshot.raw_buttons = state.buttons.0;
+            snapshot.raw_lt = state.left_trigger;
+            snapshot.raw_rt = state.right_trigger;
+            snapshot.raw_left = [state.left_stick.0, state.left_stick.1];
+            snapshot.raw_right = [state.right_stick.0, state.right_stick.1];
+            snapshot.out_buttons = mapped.pad.buttons;
+            snapshot.out_lt = mapped.pad.left_trigger;
+            snapshot.out_rt = mapped.pad.right_trigger;
+            snapshot.out_left = [mapped.pad.left_stick.0, mapped.pad.left_stick.1];
+            snapshot.out_right = [mapped.pad.right_stick.0, mapped.pad.right_stick.1];
+        }
+        snapshot.virtual_pad = status.virtual_pad.code();
+
+        if let Some(writer) = &mut live_writer {
+            let due = last_live_write.map_or(true, |at| at.elapsed() >= HEARTBEAT);
+            if snapshot != last_snapshot || due {
+                last_snapshot = snapshot;
+                writer.write(&Snapshot {
+                    heartbeat: live::now_ms(),
+                    ..snapshot
+                });
+                last_live_write = Some(Instant::now());
+            }
+        } else {
+            live_writer = LiveWriter::create();
         }
 
         status.controller = active.map(|(slot, _)| slot);

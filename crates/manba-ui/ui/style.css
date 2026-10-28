@@ -333,6 +333,83 @@ button.secondary {
   border-top: 1px solid var(--border);
 }
 
+.profile-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.profile-select { flex: 1; min-width: 220px; margin-bottom: 0; }
+
+.profile-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.profile-actions button.secondary { margin-bottom: 0; }
+
+button.danger { color: var(--error); }
+
+.name-form {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+input[type="text"] {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+}
+
+.active-line { margin: 12px 0 0; }
+.active-line b { color: var(--text); font-weight: 600; }
+
+.error-text { color: var(--error); }
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.chips:empty::before {
+  content: "Ningún juego todavía.";
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  font-size: 12.5px;
+}
+
+.chip button {
+  padding: 0 6px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.game-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.game-form button.secondary { margin-bottom: 0; }
+
 .save-status { color: var(--muted); font-size: 13px; }
 .save-status.dirty { color: var(--warn); }
 .save-status.error { color: var(--error); }

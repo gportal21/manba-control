@@ -1,4 +1,4 @@
-// Ventana de configuración: edita el perfil y muestra el mando en vivo.
+// Ventana de configuración: edita los perfiles y muestra el mando en vivo.
 const { invoke } = window.__TAURI__.core;
 
 const LIVE_INTERVAL_MS = 33;
@@ -7,8 +7,11 @@ const MOUSE_ACTIONS = [
   ["raton:derecho", "Clic derecho"],
   ["raton:medio", "Clic central"],
 ];
+const REASON_GAME = 1;
+const REASON_SHORTCUT = 2;
 
 let options = null;
+let currentName = null;
 let saved = null;
 let profile = null;
 
@@ -43,6 +46,18 @@ function readInput(input) {
 function writeInput(input, value) {
   if (input.type === "checkbox") input.checked = value;
   else input.value = value;
+}
+
+function fillSelect(select, names, selected) {
+  select.replaceChildren(
+    ...names.map((name) => {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      return option;
+    }),
+  );
+  select.value = selected;
 }
 
 // --- Formulario -------------------------------------------------------------
@@ -156,6 +171,7 @@ function fillForm() {
     const key = Object.keys(profile.botones).find((k) => k.toLowerCase() === name.toLowerCase());
     selectAction($("select", row), key ? profile.botones[key] : "");
   }
+  renderGames();
   refreshLabels();
 }
 
@@ -187,12 +203,12 @@ function onChange() {
   const dirty = isDirty();
   $("#save").disabled = !dirty;
   $("#discard").disabled = !dirty;
-  setSaveStatus(dirty ? "Cambios sin guardar" : "Sin cambios", dirty ? "dirty" : "");
+  setSaveStatus(dirty ? `Cambios sin guardar en "${currentName}"` : "Sin cambios", dirty ? "dirty" : "");
 }
 
 async function save() {
   try {
-    await invoke("save_profile", { profile });
+    await invoke("save_profile", { name: currentName, profile });
     saved = clone(profile);
     onChange();
     setSaveStatus("Guardado. El servicio ya aplica los cambios.");
@@ -205,6 +221,216 @@ function discard() {
   profile = clone(saved);
   fillForm();
   onChange();
+}
+
+// --- Juegos -----------------------------------------------------------------
+
+function renderGames() {
+  const container = $("#games");
+  container.replaceChildren(
+    ...profile.juegos.map((game, index) => {
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      chip.textContent = game;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "×";
+      remove.setAttribute("aria-label", `Quitar ${game}`);
+      remove.addEventListener("click", () => {
+        profile.juegos.splice(index, 1);
+        renderGames();
+        onChange();
+      });
+      chip.append(remove);
+      return chip;
+    }),
+  );
+}
+
+function bindGames() {
+  const input = $("#game-input");
+  input.addEventListener("focus", async () => {
+    const apps = await invoke("running_apps");
+    $("#running-apps").replaceChildren(
+      ...apps.map((app) => {
+        const option = document.createElement("option");
+        option.value = app;
+        return option;
+      }),
+    );
+  });
+  $("#game-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    // Solo el nombre del ejecutable, aunque se pegue una ruta completa.
+    let game = input.value.trim().split(/[\\/]/).pop();
+    if (!game) return;
+    if (!game.toLowerCase().endsWith(".exe")) game += ".exe";
+    if (!profile.juegos.some((g) => g.toLowerCase() === game.toLowerCase())) {
+      profile.juegos.push(game);
+      renderGames();
+      onChange();
+    }
+    input.value = "";
+  });
+}
+
+// --- Perfiles ---------------------------------------------------------------
+
+let nameMode = null;
+
+async function refreshProfiles(select) {
+  const info = await invoke("profiles");
+  fillSelect($("#profile-select"), info.names, select ?? currentName);
+  fillSelect($("#base-select"), info.names, info.base);
+  $("#shortcuts").checked = info.shortcuts;
+  return info;
+}
+
+async function openProfile(name) {
+  try {
+    saved = await invoke("load_profile", { name });
+  } catch (error) {
+    // Un perfil con errores se abre con valores por defecto para poder arreglarlo.
+    setSaveStatus(`El perfil "${name}" tenía errores (${error}); se muestran valores por defecto.`, "error");
+    saved = defaultProfile();
+  }
+  currentName = name;
+  profile = clone(saved);
+  $("#profile-select").value = name;
+  const isDefault = name === options.default_profile;
+  $("#profile-rename").disabled = isDefault;
+  $("#profile-delete").disabled = isDefault;
+  fillForm();
+  onChange();
+}
+
+function showNameForm(mode) {
+  nameMode = mode;
+  const labels = {
+    new: "Nombre del perfil nuevo",
+    duplicate: `Nombre de la copia de "${currentName}"`,
+    rename: `Nuevo nombre para "${currentName}"`,
+  };
+  $("#name-label").textContent = labels[mode];
+  $("#name-input").value = mode === "rename" ? currentName : mode === "duplicate" ? `${currentName} (copia)` : "";
+  $("#name-error").hidden = true;
+  $("#name-form").hidden = false;
+  $("#name-input").focus();
+  $("#name-input").select();
+}
+
+function hideNameForm() {
+  nameMode = null;
+  $("#name-form").hidden = true;
+}
+
+// Cambiar de perfil con cambios pendientes los perdería: se pide guardar antes.
+function blockedByChanges() {
+  if (!isDirty()) return false;
+  setSaveStatus("Guarda o descarta los cambios antes de cambiar de perfil.", "error");
+  return true;
+}
+
+function bindProfiles() {
+  $("#profile-select").addEventListener("change", (event) => {
+    const name = event.target.value;
+    if (blockedByChanges()) {
+      event.target.value = currentName;
+      return;
+    }
+    hideNameForm();
+    openProfile(name);
+  });
+
+  $("#profile-new").addEventListener("click", () => !blockedByChanges() && showNameForm("new"));
+  $("#profile-duplicate").addEventListener("click", () => !blockedByChanges() && showNameForm("duplicate"));
+  $("#profile-rename").addEventListener("click", () => !blockedByChanges() && showNameForm("rename"));
+  $("#name-cancel").addEventListener("click", hideNameForm);
+
+  $("#name-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const name = $("#name-input").value;
+    try {
+      let result;
+      if (nameMode === "rename") {
+        result = await invoke("rename_profile", { old: currentName, new: name });
+      } else {
+        const from = nameMode === "duplicate" ? currentName : null;
+        result = await invoke("create_profile", { name, from });
+      }
+      hideNameForm();
+      await refreshProfiles(result);
+      await openProfile(result);
+    } catch (error) {
+      $("#name-error").textContent = String(error);
+      $("#name-error").hidden = false;
+    }
+  });
+
+  // Borrar pide un segundo clic para confirmar.
+  const remove = $("#profile-delete");
+  let confirmTimer = null;
+  remove.addEventListener("click", async () => {
+    if (!confirmTimer) {
+      remove.textContent = "Pulsa otra vez para borrar";
+      confirmTimer = setTimeout(() => {
+        remove.textContent = "Eliminar";
+        confirmTimer = null;
+      }, 4000);
+      return;
+    }
+    clearTimeout(confirmTimer);
+    confirmTimer = null;
+    remove.textContent = "Eliminar";
+    try {
+      await invoke("delete_profile", { name: currentName });
+      saved = profile;
+      await refreshProfiles(options.default_profile);
+      await openProfile(options.default_profile);
+    } catch (error) {
+      setSaveStatus(`No se pudo borrar: ${error}`, "error");
+    }
+  });
+}
+
+// --- General ----------------------------------------------------------------
+
+function showGeneralError(error) {
+  const box = $("#general-error");
+  box.textContent = error ? String(error) : "";
+  box.hidden = !error;
+}
+
+async function bindGeneral() {
+  $("#base-select").addEventListener("change", async (event) => {
+    try {
+      await invoke("set_base", { name: event.target.value });
+      showGeneralError(null);
+    } catch (error) {
+      showGeneralError(error);
+    }
+  });
+
+  $("#shortcuts").addEventListener("change", async (event) => {
+    try {
+      await invoke("set_shortcuts", { enabled: event.target.checked });
+      showGeneralError(null);
+    } catch (error) {
+      showGeneralError(error);
+    }
+  });
+
+  const autostart = $("#autostart");
+  autostart.checked = await invoke("autostart_enabled");
+  autostart.addEventListener("change", async () => {
+    try {
+      autostart.checked = await invoke("set_autostart", { enabled: autostart.checked });
+      showGeneralError(null);
+    } catch (error) {
+      autostart.checked = await invoke("autostart_enabled");
+      showGeneralError(error);
+    }
+  });
 }
 
 // --- Estado en vivo ---------------------------------------------------------
@@ -289,6 +515,22 @@ function showNotice(text, kind = "") {
   notice.className = `notice ${kind}`;
 }
 
+function updateActiveLine(view) {
+  const line = $("#active-line");
+  if (!view.service) {
+    line.textContent = "El servicio no está en marcha.";
+    return;
+  }
+  const reason = {
+    [REASON_GAME]: "porque el juego está en primer plano",
+    [REASON_SHORTCUT]: "elegido con el mando",
+  }[view.state.reason] ?? "es el perfil base";
+  const paused = view.state.enabled ? "" : " La reasignación está en pausa.";
+  const name = document.createElement("b");
+  name.textContent = view.active_profile;
+  line.replaceChildren("Ahora el servicio usa ", name, ` (${reason}).${paused}`);
+}
+
 function updateLive(view) {
   const state = view.state;
 
@@ -297,7 +539,7 @@ function updateLive(view) {
     setPill("#pill-pad", "", "Mando");
     setPill("#pill-virtual", "", "Mando virtual");
   } else {
-    setPill("#pill-service", "ok", state.enabled ? "Servicio activo" : "Servicio (perfil en pausa)");
+    setPill("#pill-service", "ok", state.enabled ? "Servicio activo" : "Servicio (en pausa)");
     setPill("#pill-pad", state.connected ? "ok" : "warn", state.connected ? "Mando conectado" : "Sin mando");
     const virtual = [
       ["", "Mando virtual"],
@@ -307,17 +549,19 @@ function updateLive(view) {
     ][state.virtual_pad] || ["", "Mando virtual"];
     setPill("#pill-virtual", virtual[0], virtual[1]);
   }
+  updateActiveLine(view);
 
   if (view.error) {
-    showNotice(`El perfil tiene un error y no se puede guardar: ${view.error}`, "error");
+    showNotice(`Este perfil tiene un error y no se puede guardar: ${view.error}`, "error");
   } else if (!view.service) {
-    showNotice("El servicio no está en marcha. Puedes editar el perfil, pero no verás el mando en vivo ni se aplicarán los cambios hasta que lo inicies.");
+    showNotice("El servicio no está en marcha. Puedes editar los perfiles, pero no verás el mando en vivo ni se aplicarán los cambios hasta que lo inicies.");
   } else if (!state.profile_ok) {
-    showNotice("El servicio no pudo cargar el perfil guardado y sigue usando el anterior. Guarda desde aquí para corregirlo.", "error");
+    showNotice("Algún perfil guardado tiene errores y el servicio no lo puede usar. Ábrelo aquí y guárdalo para corregirlo.", "error");
   } else {
     showNotice("");
   }
 
+  // La vista en vivo se dibuja con el perfil que se está editando.
   const live = view.service && state.connected ? state : null;
   for (const [card, stick, raw, processed] of [
     [$('[data-stick="stick_izquierdo"]'), "stick_izquierdo", live?.raw_left, view.left],
@@ -351,7 +595,7 @@ function updateLive(view) {
 // Solo se consulta el estado con la ventana visible, para no gastar nada
 // cuando está minimizada o tapada.
 async function liveLoop() {
-  if (!document.hidden) {
+  if (!document.hidden && profile) {
     try {
       updateLive(await invoke("live", { profile }));
     } catch (error) {
@@ -362,52 +606,6 @@ async function liveLoop() {
 }
 
 // --- Inicio -----------------------------------------------------------------
-
-async function init() {
-  options = await invoke("options");
-  buildSticks();
-  buildButtons();
-  bindInputs();
-
-  try {
-    saved = await invoke("load_profile");
-  } catch (error) {
-    showNotice(`No se pudo leer el perfil (${options.profile_path}): ${error}. Se muestran los valores por defecto; al guardar se reemplazará.`, "error");
-    saved = null;
-  }
-  profile = clone(saved ?? defaultProfile());
-  if (!saved) saved = clone(profile);
-
-  fillForm();
-  onChange();
-
-  $("#save").addEventListener("click", save);
-  $("#discard").addEventListener("click", discard);
-  $("#test-vibration").addEventListener("click", () => invoke("test_vibration"));
-
-  // Se aplica al momento: no forma parte del perfil.
-  const autostart = $("#autostart");
-  const autostartError = $("#autostart-error");
-  autostart.checked = await invoke("autostart_enabled");
-  autostart.addEventListener("change", async () => {
-    try {
-      autostart.checked = await invoke("set_autostart", { enabled: autostart.checked });
-      autostartError.hidden = true;
-    } catch (error) {
-      autostart.checked = await invoke("autostart_enabled");
-      autostartError.textContent = String(error);
-      autostartError.hidden = false;
-    }
-  });
-  document.addEventListener("keydown", (event) => {
-    if (event.ctrlKey && event.key.toLowerCase() === "s" && isDirty()) {
-      event.preventDefault();
-      save();
-    }
-  });
-
-  liveLoop();
-}
 
 function defaultProfile() {
   const stick = {
@@ -420,12 +618,39 @@ function defaultProfile() {
   };
   return {
     intervalo_ms: 1,
+    juegos: [],
     stick_izquierdo: { ...stick },
     stick_derecho: { ...stick },
     gatillos: { umbral: 30 },
     vibracion: { intensidad: 1 },
     botones: {},
   };
+}
+
+async function init() {
+  options = await invoke("options");
+  buildSticks();
+  buildButtons();
+  bindInputs();
+  bindGames();
+  bindProfiles();
+  await bindGeneral();
+
+  const info = await refreshProfiles(options.default_profile);
+  // Se abre el perfil base, que es el que se usa la mayor parte del tiempo.
+  await openProfile(info.names.includes(info.base) ? info.base : options.default_profile);
+
+  $("#save").addEventListener("click", save);
+  $("#discard").addEventListener("click", discard);
+  $("#test-vibration").addEventListener("click", () => invoke("test_vibration"));
+  document.addEventListener("keydown", (event) => {
+    if (event.ctrlKey && event.key.toLowerCase() === "s" && isDirty()) {
+      event.preventDefault();
+      save();
+    }
+  });
+
+  liveLoop();
 }
 
 init();

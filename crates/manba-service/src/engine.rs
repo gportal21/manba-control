@@ -1,6 +1,5 @@
-//! Hilo de trabajo: lee el mando, aplica el perfil y envía el resultado.
+//! Hilo de trabajo: lee el mando, elige el perfil, lo aplica y envía el resultado.
 
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -8,8 +7,9 @@ use std::time::{Duration, Instant, SystemTime};
 
 use manba_core::live::{self, LiveWriter, Snapshot};
 use manba_core::mapping::{Mapper, PadOutput};
-use manba_core::profile::Profile;
-use manba_core::xinput::{Event, GamepadState, Poller};
+use manba_core::store::{AppConfig, Store, DEFAULT_PROFILE};
+use manba_core::xinput::{self, Buttons, Event, GamepadState, Poller};
+use manba_core::process;
 
 use crate::output::{KeyboardMouse, VirtualPad, VirtualPadError};
 
@@ -18,10 +18,15 @@ const IDLE_INTERVAL: Duration = Duration::from_millis(50);
 /// Tope del tiempo entre ciclos para el movimiento del cursor, por si el
 /// hilo se retrasa (evita saltos bruscos).
 const MAX_STEP: Duration = Duration::from_millis(50);
-/// Cada cuánto se mira si el archivo del perfil ha cambiado.
+/// Cada cuánto se mira si algún perfil o la configuración han cambiado.
 const PROFILE_CHECK: Duration = Duration::from_millis(500);
+/// Cada cuánto se mira qué programa está en primer plano.
+const FOREGROUND_CHECK: Duration = Duration::from_millis(250);
 /// Cada cuánto se publica el estado aunque no cambie, como señal de vida.
 const HEARTBEAT: Duration = Duration::from_millis(250);
+
+/// Botones que usan los atajos mientras se mantiene Back.
+const SHORTCUT_BUTTONS: u16 = Buttons::DPAD_LEFT | Buttons::DPAD_RIGHT | Buttons::DPAD_DOWN;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum PadStatus {
@@ -48,14 +53,23 @@ pub struct Status {
     /// Ranura de XInput del mando físico en uso.
     pub controller: Option<u32>,
     pub virtual_pad: PadStatus,
-    pub profile_error: Option<String>,
+    pub enabled: bool,
+    pub profiles: Vec<String>,
+    pub base: String,
+    pub shortcuts: bool,
+    pub active: String,
+    /// Uno de `live::REASON_*`.
+    pub reason: u8,
+    /// Juego que activó el perfil, si fue por juego.
+    pub game: Option<String>,
+    /// Perfiles que no se pudieron cargar, con su error.
+    pub errors: Vec<String>,
 }
 
 /// Estado compartido entre la bandeja (hilo principal) y el motor.
 pub struct Shared {
-    /// Con el perfil desactivado el mando virtual repite al físico.
+    /// Con la reasignación en pausa el mando virtual repite al físico.
     pub enabled: AtomicBool,
-    pub reload: AtomicBool,
     pub stop: AtomicBool,
     pub status: Mutex<Status>,
 }
@@ -64,25 +78,89 @@ impl Shared {
     pub fn new() -> Self {
         Self {
             enabled: AtomicBool::new(true),
-            reload: AtomicBool::new(true),
             stop: AtomicBool::new(false),
             status: Mutex::new(Status::default()),
         }
     }
 }
 
-fn modified(path: &Path) -> Option<SystemTime> {
-    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+struct Loaded {
+    name: String,
+    games: Vec<String>,
+    mapper: Mapper,
+    interval: Duration,
+    vibration: f32,
+}
+
+impl Loaded {
+    fn fallback() -> Self {
+        Self {
+            name: DEFAULT_PROFILE.to_string(),
+            games: Vec::new(),
+            mapper: Mapper::default(),
+            interval: Duration::from_millis(1),
+            vibration: 1.0,
+        }
+    }
+}
+
+fn load_profiles(store: &Store) -> (Vec<Loaded>, Vec<String>) {
+    let mut loaded = Vec::new();
+    let mut errors = Vec::new();
+    for name in store.list() {
+        let result = store
+            .load(&name)
+            .and_then(|profile| Mapper::new(&profile).map(|mapper| (profile, mapper)));
+        match result {
+            Ok((profile, mapper)) => loaded.push(Loaded {
+                games: profile.game_keys(),
+                interval: Duration::from_millis(profile.poll_interval_ms),
+                vibration: profile.vibration.intensity,
+                mapper,
+                name,
+            }),
+            Err(e) => errors.push(format!("{name}: {e}")),
+        }
+    }
+    if loaded.is_empty() {
+        loaded.push(Loaded::fallback());
+    }
+    (loaded, errors)
+}
+
+/// Perfil elegido con el mando. Dura mientras siga en primer plano el
+/// mismo programa en el que se eligió.
+struct Override {
+    profile: String,
+    exe: Option<String>,
+}
+
+/// Unas vibraciones cortas en el mando físico para confirmar un atajo.
+fn pulse(slot: u32, count: u32) {
+    thread::spawn(move || {
+        for _ in 0..count {
+            let _ = xinput::set_vibration(slot, 45_000, 45_000);
+            thread::sleep(Duration::from_millis(90));
+            let _ = xinput::set_vibration(slot, 0, 0);
+            thread::sleep(Duration::from_millis(90));
+        }
+    });
 }
 
 /// Bucle principal del motor. `notify` avisa a la bandeja de que el estado cambió.
-pub fn run(shared: &Shared, profile_path: &Path, notify: impl Fn()) {
+pub fn run(shared: &Shared, store: &Store, notify: impl Fn()) {
     let passthrough = Mapper::default();
-    let mut mapper = Mapper::default();
-    let mut interval = Duration::from_millis(1);
     let vibration = Arc::new(AtomicU32::new(1.0f32.to_bits()));
-    let mut profile_mtime = None;
-    let mut last_profile_check = Instant::now();
+
+    let mut profiles: Vec<Loaded> = vec![Loaded::fallback()];
+    let mut config = AppConfig::default();
+    let mut signature: Vec<(String, Option<SystemTime>)> = Vec::new();
+    let mut last_profile_check: Option<Instant> = None;
+    let mut foreground: Option<String> = None;
+    let mut last_foreground_check: Option<Instant> = None;
+    let mut override_: Option<Override> = None;
+    let mut active_index = 0;
+    let mut prev_buttons = 0u16;
 
     let mut poller = Poller::new();
     let mut events = Vec::new();
@@ -92,37 +170,32 @@ pub fn run(shared: &Shared, profile_path: &Path, notify: impl Fn()) {
     let mut kbm = KeyboardMouse::default();
 
     let mut status = Status::default();
-    let mut published = Status::default();
+    let mut published: Option<Status> = None;
     let mut last_tick = Instant::now();
 
     let mut live_writer = LiveWriter::create();
     let mut last_snapshot = Snapshot::default();
     let mut last_live_write: Option<Instant> = None;
 
+    let due = |last: &Option<Instant>, every: Duration| last.map_or(true, |at| at.elapsed() >= every);
+
     while !shared.stop.load(Ordering::Relaxed) {
-        // Recarga automática cuando cambia el archivo (por ejemplo, al
-        // guardar desde la ventana de configuración).
-        if last_profile_check.elapsed() >= PROFILE_CHECK {
-            last_profile_check = Instant::now();
-            let mtime = modified(profile_path);
-            if mtime != profile_mtime {
-                shared.reload.store(true, Ordering::Relaxed);
+        // Perfiles y configuración: se recargan solos al cambiar cualquier archivo.
+        if due(&last_profile_check, PROFILE_CHECK) {
+            last_profile_check = Some(Instant::now());
+            let current = store.signature();
+            if current != signature {
+                signature = current;
+                let (loaded, errors) = load_profiles(store);
+                profiles = loaded;
+                status.errors = errors;
+                config = store.load_config();
             }
         }
-        if shared.reload.swap(false, Ordering::Relaxed) {
-            profile_mtime = modified(profile_path);
-            let loaded = Profile::load(profile_path)
-                .and_then(|profile| Mapper::new(&profile).map(|m| (profile, m)));
-            match loaded {
-                Ok((profile, new_mapper)) => {
-                    interval = Duration::from_millis(profile.poll_interval_ms);
-                    vibration.store(profile.vibration.intensity.to_bits(), Ordering::Relaxed);
-                    mapper = new_mapper;
-                    status.profile_error = None;
-                }
-                // Se mantiene el perfil anterior hasta que se corrija el archivo.
-                Err(e) => status.profile_error = Some(e),
-            }
+
+        if due(&last_foreground_check, FOREGROUND_CHECK) {
+            last_foreground_check = Some(Instant::now());
+            foreground = process::foreground_exe();
         }
 
         events.clear();
@@ -165,6 +238,65 @@ pub fn run(shared: &Shared, profile_path: &Path, notify: impl Fn()) {
             }
         }
 
+        // Atajos: con Back pulsado, la cruceta cambia de perfil o pausa. Esos
+        // botones de la cruceta no llegan al juego mientras se mantenga Back.
+        let mut input = active.map(|(_, state)| state);
+        if let (Some((slot, state)), Some(input)) = (&active, &mut input) {
+            let buttons = state.buttons.0;
+            if config.shortcuts && state.buttons.is_pressed(Buttons::BACK) {
+                let newly = buttons & !prev_buttons;
+                let step = if newly & Buttons::DPAD_RIGHT != 0 {
+                    Some(1)
+                } else if newly & Buttons::DPAD_LEFT != 0 {
+                    Some(profiles.len() - 1)
+                } else {
+                    None
+                };
+                if let Some(step) = step {
+                    let next = (active_index + step) % profiles.len();
+                    override_ = Some(Override {
+                        profile: profiles[next].name.clone(),
+                        exe: foreground.clone(),
+                    });
+                    pulse(*slot, 1);
+                }
+                if newly & Buttons::DPAD_DOWN != 0 {
+                    let enabled = !shared.enabled.load(Ordering::Relaxed);
+                    shared.enabled.store(enabled, Ordering::Relaxed);
+                    pulse(*slot, if enabled { 1 } else { 2 });
+                }
+                input.buttons.0 &= !SHORTCUT_BUTTONS;
+            }
+            prev_buttons = buttons;
+        }
+
+        // Qué perfil aplicar: el elegido con el mando, el del juego en primer
+        // plano o el perfil base, en ese orden.
+        if override_
+            .as_ref()
+            .is_some_and(|o| o.exe != foreground || !profiles.iter().any(|p| p.name == o.profile))
+        {
+            override_ = None;
+        }
+        let game_index = foreground
+            .as_ref()
+            .and_then(|exe| profiles.iter().position(|p| p.games.contains(exe)));
+        let (index, reason) = if let Some(o) = &override_ {
+            let index = profiles.iter().position(|p| p.name == o.profile).unwrap_or(0);
+            (index, live::REASON_SHORTCUT)
+        } else if let Some(index) = game_index {
+            (index, live::REASON_GAME)
+        } else {
+            let index = profiles
+                .iter()
+                .position(|p| p.name == config.base_profile)
+                .unwrap_or(0);
+            (index, live::REASON_BASE)
+        };
+        active_index = index;
+        let profile = &profiles[index];
+        vibration.store(profile.vibration.to_bits(), Ordering::Relaxed);
+
         let now = Instant::now();
         let elapsed = (now - last_tick).min(MAX_STEP);
         last_tick = now;
@@ -172,13 +304,15 @@ pub fn run(shared: &Shared, profile_path: &Path, notify: impl Fn()) {
         let enabled = shared.enabled.load(Ordering::Relaxed);
         let mut snapshot = Snapshot {
             enabled,
-            profile_ok: status.profile_error.is_none(),
+            profile_ok: status.errors.is_empty(),
+            reason,
             ..Default::default()
         };
+        snapshot.set_active_profile(&profile.name);
 
-        if let Some((_, state)) = &active {
-            let current = if enabled { &mapper } else { &passthrough };
-            let mapped = current.map(state);
+        if let (Some((_, state)), Some(input)) = (&active, &input) {
+            let mapper = if enabled { &profile.mapper } else { &passthrough };
+            let mapped = mapper.map(input);
 
             if let Some(virtual_pad) = &mut pad {
                 if last_pad != Some(mapped.pad) {
@@ -210,8 +344,7 @@ pub fn run(shared: &Shared, profile_path: &Path, notify: impl Fn()) {
         snapshot.virtual_pad = status.virtual_pad.code();
 
         if let Some(writer) = &mut live_writer {
-            let due = last_live_write.map_or(true, |at| at.elapsed() >= HEARTBEAT);
-            if snapshot != last_snapshot || due {
+            if snapshot != last_snapshot || due(&last_live_write, HEARTBEAT) {
                 last_snapshot = snapshot;
                 writer.write(&Snapshot {
                     heartbeat: live::now_ms(),
@@ -224,12 +357,20 @@ pub fn run(shared: &Shared, profile_path: &Path, notify: impl Fn()) {
         }
 
         status.controller = active.map(|(slot, _)| slot);
-        if status != published {
-            published = status.clone();
+        status.enabled = enabled;
+        status.profiles = profiles.iter().map(|p| p.name.clone()).collect();
+        status.base = config.base_profile.clone();
+        status.shortcuts = config.shortcuts;
+        status.active = profile.name.clone();
+        status.reason = reason;
+        status.game = (reason == live::REASON_GAME).then(|| foreground.clone()).flatten();
+        if published.as_ref() != Some(&status) {
+            published = Some(status.clone());
             *shared.status.lock().unwrap() = status.clone();
             notify();
         }
 
-        thread::sleep(if active.is_some() { interval } else { IDLE_INTERVAL });
+        let interval = if active.is_some() { profile.interval } else { IDLE_INTERVAL };
+        thread::sleep(interval);
     }
 }

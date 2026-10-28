@@ -2,7 +2,7 @@
 //! `%APPDATA%\manba-control\perfil.toml`.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +13,10 @@ pub const TEMPLATE: &str = r#"# Perfil de Manba Control
 
 # Cada cuántos milisegundos se lee el mando (1-16). 1 = mínima latencia.
 intervalo_ms = 1
+
+# Juegos que activan este perfil al estar en primer plano, por el nombre
+# de su ejecutable. Ejemplo: juegos = ["eldenring.exe", "RocketLeague.exe"]
+juegos = []
 
 [stick_izquierdo]
 # "stick" (normal), "raton" (mueve el cursor) o "ninguno".
@@ -69,6 +73,9 @@ const SAVED_HEADER: &str = "# Perfil de Manba Control, guardado desde la ventana
 pub struct Profile {
     #[serde(rename = "intervalo_ms")]
     pub poll_interval_ms: u64,
+    /// Ejecutables que activan este perfil automáticamente.
+    #[serde(rename = "juegos")]
+    pub games: Vec<String>,
     #[serde(rename = "stick_izquierdo")]
     pub left_stick: StickConfig,
     #[serde(rename = "stick_derecho")]
@@ -87,6 +94,7 @@ impl Default for Profile {
     fn default() -> Self {
         Self {
             poll_interval_ms: 1,
+            games: Vec::new(),
             left_stick: StickConfig::default(),
             right_stick: StickConfig::default(),
             triggers: TriggerConfig::default(),
@@ -193,6 +201,14 @@ impl Profile {
         if !(1..=16).contains(&self.poll_interval_ms) {
             return Err("intervalo_ms debe estar entre 1 y 16".into());
         }
+        for game in &self.games {
+            let game = game.trim();
+            if game.is_empty() || game.contains(['\\', '/']) {
+                return Err(format!(
+                    "juegos: '{game}' debe ser solo el nombre del ejecutable, como juego.exe"
+                ));
+            }
+        }
         for (name, stick) in [
             ("stick_izquierdo", &self.left_stick),
             ("stick_derecho", &self.right_stick),
@@ -219,21 +235,11 @@ impl Profile {
     }
 }
 
-/// `%APPDATA%\manba-control\perfil.toml`.
-pub fn default_path() -> Option<PathBuf> {
-    let appdata = std::env::var_os("APPDATA")?;
-    Some(PathBuf::from(appdata).join("manba-control").join("perfil.toml"))
-}
-
-/// Crea el perfil con la plantilla si todavía no existe.
-pub fn ensure_exists(path: &Path) -> std::io::Result<()> {
-    if path.exists() {
-        return Ok(());
+impl Profile {
+    /// Nombres de ejecutable normalizados para comparar sin mayúsculas.
+    pub fn game_keys(&self) -> Vec<String> {
+        self.games.iter().map(|g| g.trim().to_lowercase()).collect()
     }
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(path, TEMPLATE)
 }
 
 #[cfg(test)]
@@ -266,6 +272,7 @@ mod tests {
         profile.right_stick.mode = StickMode::Mouse;
         profile.vibration.intensity = 0.5;
         profile.buttons.insert("A".into(), "tecla:Espacio".into());
+        profile.games.push("EldenRing.exe".into());
 
         let path = std::env::temp_dir().join(format!("manba-perfil-{}.toml", std::process::id()));
         profile.save(&path).unwrap();
@@ -294,5 +301,6 @@ mod tests {
         assert!(Profile::parse("[stick_izquierdo]\nzona_muerta = 1.0\n").is_err());
         assert!(Profile::parse("[stick_izquierdo]\ncurva = 0\n").is_err());
         assert!(Profile::parse("[vibracion]\nintensidad = 3.0\n").is_err());
+        assert!(Profile::parse("juegos = [\"C:\\\\juegos\\\\juego.exe\"]\n").is_err());
     }
 }

@@ -25,6 +25,11 @@ pub const PAD_ACTIVE: u8 = 1;
 pub const PAD_NO_DRIVER: u8 = 2;
 pub const PAD_ERROR: u8 = 3;
 
+/// Por qué está activo el perfil actual.
+pub const REASON_BASE: u8 = 0;
+pub const REASON_GAME: u8 = 1;
+pub const REASON_SHORTCUT: u8 = 2;
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct Snapshot {
@@ -46,6 +51,28 @@ pub struct Snapshot {
     pub out_rt: u8,
     pub out_left: [i16; 2],
     pub out_right: [i16; 2],
+    /// Nombre del perfil activo en UTF-8, completado con ceros.
+    pub active_profile: [u8; crate::store::MAX_NAME_BYTES],
+    /// Uno de `REASON_*`.
+    pub reason: u8,
+}
+
+impl Snapshot {
+    pub fn set_active_profile(&mut self, name: &str) {
+        self.active_profile = [0; crate::store::MAX_NAME_BYTES];
+        let bytes = name.as_bytes();
+        let len = bytes.len().min(self.active_profile.len());
+        self.active_profile[..len].copy_from_slice(&bytes[..len]);
+    }
+
+    pub fn active_profile(&self) -> String {
+        let end = self
+            .active_profile
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(self.active_profile.len());
+        String::from_utf8_lossy(&self.active_profile[..end]).into_owned()
+    }
 }
 
 #[repr(C)]
@@ -190,6 +217,15 @@ mod tests {
         };
         writer.write(&snapshot);
         assert_eq!(reader.read(), Some(snapshot));
+    }
+
+    #[test]
+    fn active_profile_name_round_trip() {
+        let mut snapshot = Snapshot::default();
+        snapshot.set_active_profile("Carreras ñ");
+        assert_eq!(snapshot.active_profile(), "Carreras ñ");
+        snapshot.set_active_profile("Otro");
+        assert_eq!(snapshot.active_profile(), "Otro");
     }
 
     #[test]

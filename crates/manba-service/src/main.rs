@@ -9,15 +9,17 @@
 mod engine;
 mod output;
 
-use std::path::Path;
+use std::cell::RefCell;
 use std::process::Command;
 use std::ptr::{null, null_mut};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
 
-use manba_core::{autostart, profile};
-use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+use manba_core::autostart;
+use manba_core::live::{REASON_GAME, REASON_SHORTCUT};
+use manba_core::store::Store;
+use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
 use windows_sys::Win32::System::Threading::{CreateMutexW, GetCurrentThreadId};
@@ -35,10 +37,10 @@ fn main() {
     let Some(_instance) = SingleInstance::acquire() else {
         return;
     };
-    let Some(profile_path) = profile::default_path() else {
+    let Some(store) = Store::from_appdata() else {
         return;
     };
-    let _ = profile::ensure_exists(&profile_path);
+    let _ = store.init();
 
     // Crea la cola de mensajes antes de que el motor pueda escribir en ella.
     let mut msg: MSG = unsafe { std::mem::zeroed() };
@@ -48,11 +50,11 @@ fn main() {
     let shared = Arc::new(Shared::new());
     let engine = {
         let shared = Arc::clone(&shared);
-        let path = profile_path.clone();
+        let store = store.clone();
         thread::Builder::new()
             .name("manba-engine".into())
             .spawn(move || {
-                engine::run(&shared, &path, || unsafe {
+                engine::run(&shared, &store, || unsafe {
                     PostThreadMessageW(main_thread, WM_STATUS, 0, 0);
                 })
             })
@@ -71,7 +73,7 @@ fn main() {
             DispatchMessageW(&msg);
         }
         while let Ok(event) = MenuEvent::receiver().try_recv() {
-            tray.handle(&event, &shared, &profile_path);
+            tray.handle(&event, &shared, &store);
         }
     }
 
@@ -82,36 +84,44 @@ fn main() {
 struct Tray {
     icon: TrayIcon,
     status: MenuItem,
-    profile_status: MenuItem,
+    active: MenuItem,
+    errors: MenuItem,
     settings: MenuItem,
+    base_menu: Submenu,
+    /// Un elemento por perfil; se rehace cuando cambia la lista.
+    base_items: RefCell<Vec<(String, CheckMenuItem)>>,
     enabled: CheckMenuItem,
+    shortcuts: CheckMenuItem,
     autostart: CheckMenuItem,
-    reload: MenuItem,
-    edit: MenuItem,
+    folder: MenuItem,
     quit: MenuItem,
 }
 
 impl Tray {
     fn new() -> Self {
         let status = MenuItem::new("Esperando mando", false, None);
-        let profile_status = MenuItem::new("Perfil cargado", false, None);
+        let active = MenuItem::new("Perfil: Predeterminado", false, None);
+        let errors = MenuItem::new("Perfiles sin errores", false, None);
         let settings = MenuItem::new("Abrir configuración", true, None);
-        let enabled = CheckMenuItem::new("Perfil activo", true, true, None);
+        let base_menu = Submenu::new("Perfil base", true);
+        let enabled = CheckMenuItem::new("Reasignación activa", true, true, None);
+        let shortcuts = CheckMenuItem::new("Atajos del mando (Back + cruceta)", true, true, None);
         let autostart = CheckMenuItem::new("Iniciar con Windows", true, autostart::is_enabled(), None);
-        let reload = MenuItem::new("Recargar perfil", true, None);
-        let edit = MenuItem::new("Editar perfil", true, None);
+        let folder = MenuItem::new("Abrir carpeta de perfiles", true, None);
         let quit = MenuItem::new("Salir", true, None);
 
         let menu = Menu::new();
         menu.append_items(&[
             &status,
-            &profile_status,
+            &active,
+            &errors,
             &PredefinedMenuItem::separator(),
             &settings,
+            &base_menu,
             &enabled,
-            &reload,
-            &edit,
+            &shortcuts,
             &autostart,
+            &folder,
             &PredefinedMenuItem::separator(),
             &quit,
         ])
@@ -128,12 +138,15 @@ impl Tray {
         Self {
             icon,
             status,
-            profile_status,
+            active,
+            errors,
             settings,
+            base_menu,
+            base_items: RefCell::new(Vec::new()),
             enabled,
+            shortcuts,
             autostart,
-            reload,
-            edit,
+            folder,
             quit,
         }
     }
@@ -152,28 +165,81 @@ impl Tray {
         let text = format!("{controller}{output}");
         self.status.set_text(truncate(&text, 90));
 
-        match &status.profile_error {
-            Some(e) => self.profile_status.set_text(truncate(&format!("Error en el perfil: {e}"), 90)),
-            None => self.profile_status.set_text("Perfil cargado"),
+        let reason = match (status.reason, &status.game) {
+            (REASON_GAME, Some(game)) => format!(" (juego: {game})"),
+            (REASON_SHORTCUT, _) => " (elegido con el mando)".to_string(),
+            _ => String::new(),
+        };
+        let paused = if status.enabled { "" } else { " - en pausa" };
+        let active = format!("Perfil: {}{reason}{paused}", status.active);
+        self.active.set_text(truncate(&active, 90));
+
+        match status.errors.as_slice() {
+            [] => self.errors.set_text("Perfiles sin errores"),
+            [one] => self.errors.set_text(truncate(&format!("Error en el perfil {one}"), 90)),
+            many => self
+                .errors
+                .set_text(format!("{} perfiles con errores (ábrelos en la configuración)", many.len())),
         }
+
+        self.enabled.set_checked(status.enabled);
+        self.shortcuts.set_checked(status.shortcuts);
+        self.sync_base_items(status);
 
         // El tooltip de la bandeja admite como máximo 127 caracteres.
         let _ = self
             .icon
-            .set_tooltip(Some(truncate(&format!("Manba Control\n{text}"), 120)));
+            .set_tooltip(Some(truncate(&format!("Manba Control\n{text}\n{active}"), 120)));
         let _ = self.icon.set_icon(Some(make_icon(status.controller.is_some())));
     }
 
-    fn handle(&self, event: &MenuEvent, shared: &Shared, profile_path: &Path) {
-        if event.id == *self.settings.id() {
+    fn sync_base_items(&self, status: &Status) {
+        let mut items = self.base_items.borrow_mut();
+        let names: Vec<&String> = items.iter().map(|(name, _)| name).collect();
+        if names != status.profiles.iter().collect::<Vec<_>>() {
+            for (_, item) in items.drain(..) {
+                let _ = self.base_menu.remove(&item);
+            }
+            for name in &status.profiles {
+                let item = CheckMenuItem::new(name, true, false, None);
+                let _ = self.base_menu.append(&item);
+                items.push((name.clone(), item));
+            }
+        }
+        // Se comporta como una lista de opción única.
+        for (name, item) in items.iter() {
+            item.set_checked(*name == status.base);
+        }
+    }
+
+    fn handle(&self, event: &MenuEvent, shared: &Shared, store: &Store) {
+        let base = self
+            .base_items
+            .borrow()
+            .iter()
+            .find(|(_, item)| event.id == *item.id())
+            .map(|(name, _)| name.clone());
+        if let Some(name) = base {
+            let mut config = store.load_config();
+            config.base_profile = name;
+            let _ = store.save_config(&config);
+            // El motor lo recoge enseguida; mientras, se marca ya en el menú.
+            let mut status = shared.status.lock().unwrap().clone();
+            status.base = config.base_profile;
+            self.sync_base_items(&status);
+        } else if event.id == *self.settings.id() {
             // La ventana se distribuye junto al servicio.
-            if let Some(dir) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf)) {
-                let _ = Command::new(dir.join("manba-ui.exe")).spawn();
+            if let Ok(exe) = std::env::current_exe() {
+                let _ = Command::new(exe.with_file_name("manba-ui.exe")).spawn();
             }
         } else if event.id == *self.enabled.id() {
             shared
                 .enabled
                 .store(self.enabled.is_checked(), Ordering::Relaxed);
+        } else if event.id == *self.shortcuts.id() {
+            let mut config = store.load_config();
+            config.shortcuts = self.shortcuts.is_checked();
+            let _ = store.save_config(&config);
         } else if event.id == *self.autostart.id() {
             let result = if self.autostart.is_checked() {
                 std::env::current_exe()
@@ -186,10 +252,8 @@ impl Tray {
             if result.is_err() {
                 self.autostart.set_checked(autostart::is_enabled());
             }
-        } else if event.id == *self.reload.id() {
-            shared.reload.store(true, Ordering::Relaxed);
-        } else if event.id == *self.edit.id() {
-            let _ = Command::new("notepad.exe").arg(profile_path).spawn();
+        } else if event.id == *self.folder.id() {
+            let _ = Command::new("explorer.exe").arg(store.profiles_dir()).spawn();
         } else if event.id == *self.quit.id() {
             unsafe { PostQuitMessage(0) };
         }

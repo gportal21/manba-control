@@ -25,13 +25,63 @@
   <main>
     <div class="notice" id="notice" hidden></div>
 
-    <section class="card" id="general">
-      <h2>General</h2>
-      <label class="check">
-        <input type="checkbox" id="autostart">
-        <span>Iniciar Manba Control con Windows</span>
-      </label>
-      <p class="hint" id="autostart-error" hidden></p>
+    <section class="card">
+      <div class="profile-bar">
+        <label class="field profile-select">
+          <span>Perfil que estás editando</span>
+          <select id="profile-select"></select>
+        </label>
+        <div class="profile-actions">
+          <button class="secondary" type="button" id="profile-new">Nuevo</button>
+          <button class="secondary" type="button" id="profile-duplicate">Duplicar</button>
+          <button class="secondary" type="button" id="profile-rename">Renombrar</button>
+          <button class="secondary danger" type="button" id="profile-delete">Eliminar</button>
+        </div>
+      </div>
+      <form class="name-form" id="name-form" hidden>
+        <label class="field">
+          <span id="name-label">Nombre del perfil</span>
+          <input type="text" id="name-input" maxlength="32" autocomplete="off" spellcheck="false">
+        </label>
+        <div class="profile-actions">
+          <button class="primary" type="submit">Aceptar</button>
+          <button class="secondary" type="button" id="name-cancel">Cancelar</button>
+        </div>
+        <p class="hint error-text" id="name-error" hidden></p>
+      </form>
+      <p class="hint active-line" id="active-line">El servicio no está en marcha.</p>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>Juegos de este perfil</h2>
+        <p class="hint">Cuando uno de estos programas esté en primer plano, el servicio usará este perfil automáticamente.</p>
+        <div class="chips" id="games"></div>
+        <form class="game-form" id="game-form">
+          <input type="text" id="game-input" list="running-apps" placeholder="juego.exe" autocomplete="off" spellcheck="false">
+          <datalist id="running-apps"></datalist>
+          <button class="secondary" type="submit">Añadir</button>
+        </form>
+        <p class="hint">Mientras escribes se sugieren los programas abiertos ahora mismo: abre el juego antes para encontrarlo fácilmente.</p>
+      </article>
+
+      <article class="card" id="general">
+        <h2>General</h2>
+        <label class="field">
+          <span>Perfil base (cuando ningún juego tiene uno propio)</span>
+          <select id="base-select"></select>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="shortcuts">
+          <span>Atajos del mando</span>
+        </label>
+        <p class="hint">Mantén Back y pulsa la cruceta: derecha o izquierda cambian de perfil, abajo pausa o reanuda la reasignación. El mando vibra para confirmarlo.</p>
+        <label class="check">
+          <input type="checkbox" id="autostart">
+          <span>Iniciar Manba Control con Windows</span>
+        </label>
+        <p class="hint error-text" id="general-error" hidden></p>
+      </article>
     </section>
 
     <section class="grid sticks">

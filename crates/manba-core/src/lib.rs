@@ -8,5 +8,7 @@ pub mod deadzone;
 pub mod keys;
 pub mod live;
 pub mod mapping;
+pub mod process;
 pub mod profile;
+pub mod store;
 pub mod xinput;

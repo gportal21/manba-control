@@ -1,8 +1,8 @@
 //! Manba Control: ventana de configuración.
 //!
-//! Edita el perfil y muestra el mando en vivo. No lee el mando directamente
-//! (HidHide lo oculta para todo lo que no sea el servicio): toma el estado
-//! que el servicio publica en memoria compartida.
+//! Edita los perfiles y muestra el mando en vivo. No lee el mando
+//! directamente (HidHide lo oculta para todo lo que no sea el servicio):
+//! toma el estado que el servicio publica en memoria compartida.
 
 // Sin ventana de consola en la versión final.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -14,13 +14,14 @@ use std::time::Duration;
 
 use manba_core::live::{LiveReader, Snapshot};
 use manba_core::mapping::{self, Control, Mapper};
-use manba_core::profile::{self, Profile};
-use manba_core::{autostart, keys, xinput};
+use manba_core::profile::Profile;
+use manba_core::store::{Store, DEFAULT_PROFILE};
+use manba_core::{autostart, keys, process, xinput};
 use serde::Serialize;
 use tauri::State;
 
 struct App {
-    profile_path: PathBuf,
+    store: Store,
     /// Se abre al primer uso y se reintenta mientras el servicio no esté en marcha.
     reader: Mutex<Option<LiveReader>>,
 }
@@ -38,7 +39,8 @@ struct ControlInfo {
 struct Options {
     controls: Vec<ControlInfo>,
     keys: Vec<&'static str>,
-    profile_path: String,
+    profiles_dir: String,
+    default_profile: &'static str,
 }
 
 #[tauri::command]
@@ -53,20 +55,72 @@ fn options(app: State<App>) -> Options {
     Options {
         controls,
         keys: keys::key_names().collect(),
-        profile_path: app.profile_path.display().to_string(),
+        profiles_dir: app.store.profiles_dir().display().to_string(),
+        default_profile: DEFAULT_PROFILE,
+    }
+}
+
+#[derive(Serialize)]
+struct ProfilesInfo {
+    names: Vec<String>,
+    base: String,
+    shortcuts: bool,
+}
+
+#[tauri::command]
+fn profiles(app: State<App>) -> ProfilesInfo {
+    let config = app.store.load_config();
+    ProfilesInfo {
+        names: app.store.list(),
+        base: config.base_profile,
+        shortcuts: config.shortcuts,
     }
 }
 
 #[tauri::command]
-fn load_profile(app: State<App>) -> Result<Profile, String> {
-    profile::ensure_exists(&app.profile_path).map_err(|e| e.to_string())?;
-    Profile::load(&app.profile_path)
+fn load_profile(app: State<App>, name: String) -> Result<Profile, String> {
+    app.store.load(&name)
 }
 
 #[tauri::command]
-fn save_profile(app: State<App>, profile: Profile) -> Result<(), String> {
+fn save_profile(app: State<App>, name: String, profile: Profile) -> Result<(), String> {
     Mapper::new(&profile)?;
-    profile.save(&app.profile_path)
+    app.store.save(&name, &profile)
+}
+
+#[tauri::command]
+fn create_profile(app: State<App>, name: String, from: Option<String>) -> Result<String, String> {
+    app.store.create(&name, from.as_deref())
+}
+
+#[tauri::command]
+fn rename_profile(app: State<App>, old: String, new: String) -> Result<String, String> {
+    app.store.rename(&old, &new)
+}
+
+#[tauri::command]
+fn delete_profile(app: State<App>, name: String) -> Result<(), String> {
+    app.store.delete(&name)
+}
+
+#[tauri::command]
+fn set_base(app: State<App>, name: String) -> Result<(), String> {
+    let mut config = app.store.load_config();
+    config.base_profile = name;
+    app.store.save_config(&config)
+}
+
+#[tauri::command]
+fn set_shortcuts(app: State<App>, enabled: bool) -> Result<(), String> {
+    let mut config = app.store.load_config();
+    config.shortcuts = enabled;
+    app.store.save_config(&config)
+}
+
+/// Programas abiertos, para sugerir juegos.
+#[tauri::command]
+fn running_apps() -> Vec<String> {
+    process::visible_apps()
 }
 
 #[derive(Serialize)]
@@ -74,6 +128,8 @@ struct LiveView {
     /// El servicio está en marcha y publicando.
     service: bool,
     state: Option<Snapshot>,
+    /// Perfil que el servicio está aplicando ahora.
+    active_profile: Option<String>,
     /// Sticks procesados con el perfil que se está editando (aún sin guardar).
     left: Option<(f32, f32)>,
     right: Option<(f32, f32)>,
@@ -103,6 +159,7 @@ fn live(app: State<App>, profile: Profile) -> LiveView {
 
     LiveView {
         service: state.is_some(),
+        active_profile: state.as_ref().map(Snapshot::active_profile),
         state,
         left,
         right,
@@ -134,7 +191,7 @@ fn set_autostart(enabled: bool) -> Result<bool, String> {
 
 /// Hace vibrar los mandos visibles. Con el servicio en marcha es el mando
 /// virtual, y el servicio reenvía la vibración al Manba con la intensidad
-/// del perfil guardado.
+/// del perfil activo.
 #[tauri::command]
 fn test_vibration() {
     thread::spawn(|| {
@@ -152,16 +209,24 @@ fn test_vibration() {
 }
 
 fn main() {
-    let profile_path = profile::default_path().expect("no se encontró la carpeta APPDATA");
+    let store = Store::from_appdata().expect("no se encontró la carpeta APPDATA");
+    let _ = store.init();
     tauri::Builder::default()
         .manage(App {
-            profile_path,
+            store,
             reader: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             options,
+            profiles,
             load_profile,
             save_profile,
+            create_profile,
+            rename_profile,
+            delete_profile,
+            set_base,
+            set_shortcuts,
+            running_apps,
             live,
             test_vibration,
             autostart_enabled,

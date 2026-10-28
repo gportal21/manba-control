@@ -80,6 +80,11 @@ impl Store {
         self.root.join("perfiles")
     }
 
+    /// Registro de eventos del servicio.
+    pub fn log_path(&self) -> PathBuf {
+        self.root.join("servicio.log")
+    }
+
     fn config_path(&self) -> PathBuf {
         self.root.join("config.toml")
     }

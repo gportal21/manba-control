@@ -7,6 +7,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod engine;
+mod log;
 mod output;
 
 use std::cell::RefCell;
@@ -41,6 +42,8 @@ fn main() {
         return;
     };
     let _ = store.init();
+    log::init(&store.log_path());
+    log::write(&format!("Servicio iniciado (versión {})", env!("CARGO_PKG_VERSION")));
 
     // Crea la cola de mensajes antes de que el motor pueda escribir en ella.
     let mut msg: MSG = unsafe { std::mem::zeroed() };
@@ -79,6 +82,7 @@ fn main() {
 
     shared.stop.store(true, Ordering::Relaxed);
     let _ = engine.join();
+    log::write("Servicio detenido");
 }
 
 struct Tray {
@@ -94,6 +98,7 @@ struct Tray {
     shortcuts: CheckMenuItem,
     autostart: CheckMenuItem,
     folder: MenuItem,
+    log: MenuItem,
     quit: MenuItem,
 }
 
@@ -108,6 +113,7 @@ impl Tray {
         let shortcuts = CheckMenuItem::new("Atajos del mando (Back + cruceta)", true, true, None);
         let autostart = CheckMenuItem::new("Iniciar con Windows", true, autostart::is_enabled(), None);
         let folder = MenuItem::new("Abrir carpeta de perfiles", true, None);
+        let log = MenuItem::new("Abrir registro de eventos", true, None);
         let quit = MenuItem::new("Salir", true, None);
 
         let menu = Menu::new();
@@ -122,6 +128,7 @@ impl Tray {
             &shortcuts,
             &autostart,
             &folder,
+            &log,
             &PredefinedMenuItem::separator(),
             &quit,
         ])
@@ -147,6 +154,7 @@ impl Tray {
             shortcuts,
             autostart,
             folder,
+            log,
             quit,
         }
     }
@@ -254,6 +262,8 @@ impl Tray {
             }
         } else if event.id == *self.folder.id() {
             let _ = Command::new("explorer.exe").arg(store.profiles_dir()).spawn();
+        } else if event.id == *self.log.id() {
+            let _ = Command::new("notepad.exe").arg(store.log_path()).spawn();
         } else if event.id == *self.quit.id() {
             unsafe { PostQuitMessage(0) };
         }

@@ -11,6 +11,7 @@ use manba_core::store::{AppConfig, Store, DEFAULT_PROFILE};
 use manba_core::xinput::{self, Buttons, Event, GamepadState, Poller};
 use manba_core::process;
 
+use crate::log;
 use crate::output::{KeyboardMouse, VirtualPad, VirtualPadError};
 
 /// Sin mando conectado no hace falta leer tan a menudo.
@@ -24,6 +25,10 @@ const PROFILE_CHECK: Duration = Duration::from_millis(500);
 const FOREGROUND_CHECK: Duration = Duration::from_millis(250);
 /// Cada cuánto se publica el estado aunque no cambie, como señal de vida.
 const HEARTBEAT: Duration = Duration::from_millis(250);
+
+/// Espera entre intentos de crear el mando virtual. Justo después de cerrar
+/// otra instancia, el driver puede tardar un momento en liberar el anterior.
+const PAD_RETRY: Duration = Duration::from_secs(1);
 
 /// Botones que usan los atajos mientras se mantiene Back.
 const SHORTCUT_BUTTONS: u16 = Buttons::DPAD_LEFT | Buttons::DPAD_RIGHT | Buttons::DPAD_DOWN;
@@ -135,6 +140,65 @@ struct Override {
     exe: Option<String>,
 }
 
+/// Intentos de crear el mando virtual, para reintentar sin llenar el registro.
+#[derive(Default)]
+struct PadAttempts {
+    failures: u32,
+    next_retry: Option<Instant>,
+}
+
+impl PadAttempts {
+    fn due(&self) -> bool {
+        self.next_retry.is_some_and(|at| Instant::now() >= at)
+    }
+
+    /// Intenta crear el mando virtual para el mando físico de `slot`.
+    fn connect(
+        &mut self,
+        slot: u32,
+        vibration: &Arc<AtomicU32>,
+        status: &mut Status,
+    ) -> Option<VirtualPad> {
+        match VirtualPad::connect(slot, Arc::clone(vibration)) {
+            Ok(virtual_pad) => {
+                match self.failures {
+                    0 => log::write("Mando virtual creado"),
+                    1 => log::write("Mando virtual creado tras 1 intento fallido"),
+                    n => log::write(&format!("Mando virtual creado tras {n} intentos fallidos")),
+                }
+                *self = Self::default();
+                status.virtual_pad = PadStatus::Active;
+                Some(virtual_pad)
+            }
+            Err(VirtualPadError::NoDriver) => {
+                log::write("No se pudo crear el mando virtual: ViGEmBus no está instalado");
+                *self = Self::default();
+                status.virtual_pad = PadStatus::NoDriver;
+                None
+            }
+            Err(VirtualPadError::Other(e)) => {
+                self.failures += 1;
+                // El primero y luego uno de cada 60 (un minuto), para no llenar el registro.
+                if self.failures % 60 == 1 {
+                    log::write(&format!(
+                        "No se pudo crear el mando virtual (intento {}): {e}. Se reintentará",
+                        self.failures
+                    ));
+                }
+                self.next_retry = Some(Instant::now() + PAD_RETRY);
+                status.virtual_pad = PadStatus::Error(e);
+                None
+            }
+        }
+    }
+
+    /// El mando virtual dejó de responder: se reintenta en breve.
+    fn lost(&mut self) {
+        self.failures = 0;
+        self.next_retry = Some(Instant::now() + PAD_RETRY);
+    }
+}
+
 /// Unas vibraciones cortas en el mando físico para confirmar un atajo.
 fn pulse(slot: u32, count: u32) {
     thread::spawn(move || {
@@ -169,6 +233,7 @@ pub fn run(shared: &Shared, store: &Store, notify: impl Fn()) {
     let mut events = Vec::new();
     let mut active: Option<(u32, GamepadState)> = None;
     let mut pad: Option<VirtualPad> = None;
+    let mut pad_attempts = PadAttempts::default();
     let mut last_pad: Option<PadOutput> = None;
     let mut kbm = KeyboardMouse::default();
 
@@ -190,6 +255,9 @@ pub fn run(shared: &Shared, store: &Store, notify: impl Fn()) {
             if current != signature {
                 signature = current;
                 let (loaded, errors) = load_profiles(store);
+                for error in &errors {
+                    log::write(&format!("Error en el perfil {error}"));
+                }
                 profiles = loaded;
                 status.errors = errors;
                 config = store.load_config();
@@ -206,25 +274,25 @@ pub fn run(shared: &Shared, store: &Store, notify: impl Fn()) {
         for event in &events {
             match *event {
                 Event::Connected(slot) if active.is_none() => {
+                    log::write(&format!("Mando conectado en la ranura {}", slot + 1));
                     active = Some((slot, GamepadState::default()));
-                    match VirtualPad::connect(slot, Arc::clone(&vibration)) {
-                        Ok(virtual_pad) => {
-                            pad = Some(virtual_pad);
-                            status.virtual_pad = PadStatus::Active;
-                        }
-                        Err(VirtualPadError::NoDriver) => status.virtual_pad = PadStatus::NoDriver,
-                        Err(VirtualPadError::Other(e)) => {
-                            status.virtual_pad = PadStatus::Error(e)
-                        }
-                    }
+                    pad = pad_attempts.connect(slot, &vibration, &mut status);
                 }
                 // Con el mando virtual creado, lo que aparezca nuevo es él
                 // mismo. ViGEm no informa de forma fiable en qué ranura de
                 // XInput queda, así que se detecta aquí y se deja de leer.
-                Event::Connected(slot) if pad.is_some() => poller.set_ignored(Some(slot)),
+                Event::Connected(slot) if pad.is_some() => {
+                    log::write(&format!("Mando virtual detectado en la ranura {}", slot + 1));
+                    poller.set_ignored(Some(slot));
+                }
+                Event::Connected(slot) => {
+                    log::write(&format!("Otro mando en la ranura {} (se ignora)", slot + 1));
+                }
                 Event::Disconnected(slot) if active.is_some_and(|(s, _)| s == slot) => {
+                    log::write(&format!("Mando desconectado de la ranura {}", slot + 1));
                     active = None;
                     pad = None;
+                    pad_attempts = PadAttempts::default();
                     last_pad = None;
                     poller.set_ignored(None);
                     kbm.release_all();
@@ -238,6 +306,12 @@ pub fn run(shared: &Shared, store: &Store, notify: impl Fn()) {
                     }
                 }
                 _ => {}
+            }
+        }
+
+        if let Some((slot, _)) = active {
+            if pad.is_none() && pad_attempts.due() {
+                pad = pad_attempts.connect(slot, &vibration, &mut status);
             }
         }
 
@@ -299,6 +373,12 @@ pub fn run(shared: &Shared, store: &Store, notify: impl Fn()) {
         active_index = index;
         let profile = &mut profiles[index];
         if last_active.as_deref() != Some(profile.name.as_str()) {
+            let why = match reason {
+                live::REASON_GAME => format!("juego {}", foreground.as_deref().unwrap_or("?")),
+                live::REASON_SHORTCUT => "elegido con el mando".to_string(),
+                _ => "perfil base".to_string(),
+            };
+            log::write(&format!("Perfil activo: {} ({why})", profile.name));
             // Un perfil recién activado empieza sin macros a medias.
             profile.mapper.reset();
             last_active = Some(profile.name.clone());
@@ -327,9 +407,13 @@ pub fn run(shared: &Shared, store: &Store, notify: impl Fn()) {
                     match virtual_pad.update(&mapped.pad) {
                         Ok(()) => last_pad = Some(mapped.pad),
                         Err(e) => {
+                            log::write(&format!(
+                                "El mando virtual dejó de responder: {e}. Se volverá a crear"
+                            ));
                             pad = None;
                             last_pad = None;
                             poller.set_ignored(None);
+                            pad_attempts.lost();
                             status.virtual_pad = PadStatus::Error(e);
                         }
                     }

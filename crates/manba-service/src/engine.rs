@@ -94,8 +94,7 @@ pub fn run(shared: &Shared, profile_path: &Path, notify: impl Fn()) {
                 Event::Connected(slot) if active.is_none() => {
                     active = Some((slot, GamepadState::default()));
                     match VirtualPad::connect() {
-                        Ok(mut virtual_pad) => {
-                            poller.set_ignored(virtual_pad.user_index());
+                        Ok(virtual_pad) => {
                             pad = Some(virtual_pad);
                             status.virtual_pad = PadStatus::Active;
                         }
@@ -105,6 +104,10 @@ pub fn run(shared: &Shared, profile_path: &Path, notify: impl Fn()) {
                         }
                     }
                 }
+                // Con el mando virtual creado, lo que aparezca nuevo es él
+                // mismo. ViGEm no informa de forma fiable en qué ranura de
+                // XInput queda, así que se detecta aquí y se deja de leer.
+                Event::Connected(slot) if pad.is_some() => poller.set_ignored(Some(slot)),
                 Event::Disconnected(slot) if active.is_some_and(|(s, _)| s == slot) => {
                     active = None;
                     pad = None;

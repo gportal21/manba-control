@@ -33,12 +33,16 @@ impl VirtualPad {
         let other = |e: vigem_client::Error| VirtualPadError::Other(format!("{e:?}"));
         target.plugin().map_err(other)?;
         target.wait_ready().map_err(other)?;
+        // El mando recién creado informa valores basura en los sticks, y el
+        // driver descarta un primer estado todo a cero por no verlo como un
+        // cambio. Un estado mínimo seguido de cero lo deja en reposo.
+        let nudge = XGamepad {
+            thumb_lx: 1,
+            ..Default::default()
+        };
+        target.update(&nudge).map_err(other)?;
+        target.update(&XGamepad::default()).map_err(other)?;
         Ok(Self { target })
-    }
-
-    /// Ranura de XInput que ocupa este mando virtual.
-    pub fn user_index(&mut self) -> Option<u32> {
-        self.target.get_user_index().ok()
     }
 
     pub fn update(&mut self, pad: &PadOutput) -> Result<(), String> {
